@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="../popup/popup.css" />
+    <title>AutoLancers — settings</title>
+    <style>
+      body {
+        width: auto;
+        max-width: 520px;
+        margin: 32px auto;
+        padding: 0 20px 40px;
+      }
+      header {
+        padding-left: 0;
+        padding-right: 0;
+      }
+      main {
+        padding: 0;
+      }
+      .row {
+        margin-top: 18px;
+      }
+      .hint {
+        margin: 4px 0 0;
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .ok {
+        color: var(--pine);
+        font-weight: 600;
+      }
+      pre {
+        background: #f3f5f4;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 10px 12px;
+        font-size: 12px;
+        overflow-x: auto;
+      }
+    </style>
+  </head>
+  <body>
+    <header><span class="brand">Auto<span>Lancers</span></span></header>
+
+    <main>
+      <div class="row">
+        <label for="apiUrl">Backend URL</label>
+        <input id="apiUrl" type="url" placeholder="http://localhost:8010" />
+        <p class="hint">Where your AutoLancers backend is running.</p>
+      </div>
+
+      <div class="row">
+        <label for="token">API token — optional</label>
+        <input id="token" type="password" placeholder="al_…" autocomplete="off" />
+        <p class="hint">
+          <b>Leave this empty to just scrape.</b> Reading a page and copying the result needs no
+          token at all. Add one only when you want a “Send to AutoLancers” button, which scores the
+          job and files it in your queue. It's an AutoLancers token, not an Upwork one — the
+          extension runs on Upwork's page, where your AutoLancers cookie isn't sent. Issue one with:
+        </p>
+        <pre>curl -X POST localhost:8010/accounts/tokens \
+  -H 'content-type: application/json' \
+  -b "al_session=&lt;your session cookie&gt;" \
+  -d '{"name":"Chrome extension"}'</pre>
+        <p class="hint">
+          The token is shown once and stored hashed — if you lose it, issue another and revoke the
+          old one.
+        </p>
+      </div>
+
+      <div class="row">
+        <p class="hint">
+          Collection only ever runs when you press <b>Collect</b>. There is no automatic trigger and
+          no schedule.
+        </p>
+        <p class="hint">
+          Read
+          <input id="concurrency" type="number" min="0" max="8" step="1"
+                 style="width: 4rem; display: inline-block" />
+          page(s) at once — <b>0 means all of them</b>. One is the default: about 76 seconds for
+          eight pages, with a pause between each. Setting it to 0 takes about 4 seconds and has
+          tripped Upwork's bot detection in practice — the browser was challenged for a while,
+          though the account itself stayed fine.
+        </p>
+      </div>
+
+      <div class="row">
+        <button id="save">Save</button>
+        <p class="hint" id="saved"></p>
+      </div>
+
+      <div class="row">
+        <button id="test" style="background: transparent; color: var(--pine); border: 1px solid var(--line)">
+          Test connection
+        </button>
+        <p class="hint" id="result"></p>
+      </div>
+    </main>
+
+    <script src="options.js"></script>
+  </body>
+</html>

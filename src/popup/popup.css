@@ -1,0 +1,424 @@
+:root {
+  --pine: #14563f;
+  --ink: #0e1a17;
+  --muted: #6b7a75;
+  --line: #e2e7e5;
+  --good: #14563f;
+  --mid: #b8791f;
+  --bad: #8a8f8d;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  width: 340px;
+  margin: 0;
+  padding: 0 0 14px;
+  font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: var(--ink);
+  background: #fff;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.brand {
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.brand span {
+  color: var(--pine);
+}
+
+header a {
+  color: var(--muted);
+  font-size: 12px;
+  text-decoration: none;
+}
+header a:hover {
+  color: var(--ink);
+}
+
+main {
+  padding: 14px 16px 0;
+}
+
+.muted {
+  color: var(--muted);
+}
+.small {
+  font-size: 12px;
+}
+.error {
+  color: #a3372c;
+}
+
+.score {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding-bottom: 8px;
+}
+.score .num {
+  font-size: 40px;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.score.good .num {
+  color: var(--good);
+}
+.score.mid .num {
+  color: var(--mid);
+}
+.score.bad .num {
+  color: var(--bad);
+}
+.verdict {
+  font-weight: 600;
+}
+
+.title {
+  margin: 2px 0 10px;
+  font-weight: 600;
+}
+
+.reasons {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  border-top: 1px solid var(--line);
+}
+.reasons li {
+  display: flex;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+.pts {
+  min-width: 34px;
+  font-variant-numeric: tabular-nums;
+  color: var(--pine);
+  font-weight: 600;
+}
+
+button {
+  width: 100%;
+  padding: 9px 12px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--pine);
+  color: #fff;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+button:hover {
+  opacity: 0.92;
+}
+
+input,
+label {
+  display: block;
+  width: 100%;
+}
+label {
+  margin: 12px 0 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+input {
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font: inherit;
+}
+input:focus {
+  outline: none;
+  border-color: var(--pine);
+}
+
+.scraped {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.scraped th,
+.scraped td {
+  text-align: left;
+  vertical-align: top;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--line);
+}
+.scraped th {
+  width: 92px;
+  font-weight: 600;
+  color: var(--muted);
+  font-size: 12px;
+}
+.scraped td {
+  word-break: break-word;
+}
+/* An absent field says so, rather than showing a blank cell that reads as "empty on Upwork". */
+.scraped td.missing {
+  color: #a3372c;
+  font-style: italic;
+}
+
+.buttons {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+button.ghost {
+  background: transparent;
+  color: var(--pine);
+  border: 1px solid var(--line);
+}
+.scored {
+  margin: 10px 0 0;
+  padding: 8px 10px;
+  background: #eef3f1;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.pages {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+}
+.pages li {
+  display: flex;
+  flex-direction: column;
+  padding: 6px 0;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+}
+.pages span {
+  font-size: 12px;
+}
+
+body {
+  max-height: 580px;
+  overflow-y: auto;
+}
+main h3 {
+  margin: 14px 0 4px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+.tally {
+  margin: 0;
+}
+.nested {
+  width: 100%;
+  border-collapse: collapse;
+}
+.nested th {
+  width: 96px;
+  font-weight: 400;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: left;
+  padding: 2px 0;
+}
+.nested td {
+  padding: 2px 0;
+  font-size: 12px;
+}
+.entries {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.entries li {
+  padding: 4px 0;
+  font-size: 12px;
+  border-bottom: 1px dotted var(--line);
+}
+.entries li:last-child {
+  border-bottom: 0;
+}
+.entries b {
+  color: var(--muted);
+  font-weight: 500;
+}
+.entries a {
+  color: var(--pine);
+  margin-right: 6px;
+}
+.missing {
+  color: #a3372c;
+  font-style: italic;
+}
+
+.checks {
+  margin: 10px 0 4px;
+}
+.check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: auto;
+  margin: 0;
+  padding: 4px 0;
+  font-size: 13px;
+  color: var(--ink);
+  text-transform: none;
+  letter-spacing: 0;
+}
+.check input {
+  width: auto;
+  margin: 0;
+}
+.check em {
+  color: var(--muted);
+  font-size: 11px;
+  font-style: normal;
+}
+
+.exporting {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0 2px;
+  font-weight: 600;
+}
+.spin {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--line);
+  border-top-color: var(--pine);
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+/* Respect a stated preference for less motion — a spinner is decoration, not information. */
+@media (prefers-reduced-motion: reduce) {
+  .spin {
+    animation: none;
+    border-top-color: var(--line);
+  }
+}
+
+/* --- export progress ------------------------------------------------------------- */
+
+.done-head {
+  color: var(--pine);
+}
+.tick {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--pine);
+  color: #fff;
+  font-size: 10px;
+}
+
+.bar {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line);
+  overflow: hidden;
+}
+.bar span {
+  display: block;
+  height: 100%;
+  background: var(--pine);
+  transition: width 0.4s ease;
+}
+.bar-note {
+  margin: 6px 0 2px;
+}
+
+.steps {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+}
+.step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+.step:last-child {
+  border-bottom: 0;
+}
+.step-label {
+  flex: 1;
+  min-width: 0;
+}
+.step-value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* State is carried by the dot as well as the text, so it reads at a glance. */
+.step .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--line);
+  flex: none;
+}
+.step.pending {
+  color: var(--muted);
+}
+.step.active .dot {
+  background: var(--pine);
+  animation: pulse 1.1s ease-in-out infinite;
+}
+.step.active .step-label {
+  font-weight: 600;
+}
+.step.done .dot {
+  background: var(--pine);
+}
+.step.failed .dot {
+  background: #a3372c;
+}
+.step.failed .step-value {
+  color: #a3372c;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.6);
+    opacity: 0.45;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .step.active .dot {
+    animation: none;
+  }
+  .bar span {
+    transition: none;
+  }
+}

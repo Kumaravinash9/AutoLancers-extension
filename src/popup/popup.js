@@ -1,0 +1,501 @@
+/**
+ * The popup is the only thing that runs. Opening it does not read the page; clicking does.
+ *
+ * Reading is the whole product for now: click, see exactly what came off the page, copy it. Sending
+ * to AutoLancers is opt-in and only appears once a token is configured, so the extension is useful
+ * with zero setup and you can judge the scraper before wiring anything to it.
+ *
+ * Nothing is declared as a content script, so nothing runs in the background and nothing paginates.
+ * That is deliberate: a tool you point at one open page is a different thing from one that watches
+ * the site for you.
+ */
+
+const $ = (id) => document.getElementById(id);
+const main = $("main");
+
+const DEFAULTS = { apiUrl: "http://localhost:8010", token: "" };
+
+async function settings() {
+  return { ...DEFAULTS, ...(await chrome.storage.sync.get(Object.keys(DEFAULTS))) };
+}
+
+async function activeTab() {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  return tab;
+}
+
+/** Inject the readers into the open tab, then call one by name. */
+async function readPage(fn) {
+  const tab = await activeTab();
+  await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    files: ["src/content/extract.js"],
+  });
+  const [{ result }] = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    func: (name) =>
+      name === "readJob"
+        ? readJob()
+        : name === "diagnose"
+          ? diagnose()
+          : name === "readText"
+            ? readText()
+            : readProfile(),
+    args: [fn],
+  });
+  return result;
+}
+
+function escape(text) {
+  return String(text ?? "").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+}
+
+/** Sections, so a long profile stays readable instead of becoming one 40-row table. */
+const VIEWS = {
+  job: [
+    ["Posting", ["title", "external_id", "category", "posted_text", "posted_at"]],
+    ["Terms", ["work_type", "budget", "experience_level", "project_length", "hours_per_week", "connects_required"]],
+    ["Competition", ["proposal_count", "interviewing", "invites_sent", "unanswered_invites", "last_viewed_by_client"]],
+    ["Skills", ["skills"]],
+    ["Client", ["client"]],
+    ["Description", ["description"]],
+  ],
+  profile: [
+    ["Identity", ["display_name", "username", "tagline", "country", "city", "timezone", "availability", "languages"]],
+    ["Money", ["hourly_rate_display", "total_earnings"]],
+    ["Track record", ["rating", "total_reviews", "job_success", "total_jobs", "total_hours"]],
+    ["Skills", ["skills"]],
+    ["Portfolio", ["portfolio"]],
+    ["Work history", ["work_history"]],
+    ["Employment", ["employment"]],
+    ["Education", ["education"]],
+    ["Certifications", ["certifications"]],
+    ["Summary", ["summary"]],
+  ],
+};
+
+const LABELS = {
+  external_id: "Job id",
+  posted_text: "Posted",
+  posted_at: "Posted (exact)",
+  work_type: "Type",
+  hours_per_week: "Hours/week",
+  connects_required: "Connects",
+  proposal_count: "Proposals",
+  last_viewed_by_client: "Client last viewed",
+  hourly_rate_display: "Rate",
+  job_success: "Job success",
+  total_reviews: "Reviews",
+};
+
+function labelFor(key) {
+  return LABELS[key] || key.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
+}
+
+function isEmpty(value) {
+  return (
+    value === null ||
+    value === undefined ||
+    value === "" ||
+    (Array.isArray(value) && value.length === 0) ||
+    (typeof value === "object" && !Array.isArray(value) && Object.values(value).every(isEmpty))
+  );
+}
+
+/** Renders one value, whatever shape it is — scalar, list of strings, list of objects, or object. */
+function valueHtml(value) {
+  if (isEmpty(value)) return '<span class="missing">not found</span>';
+
+  if (Array.isArray(value)) {
+    if (typeof value[0] === "object") {
+      return `<ul class="entries">${value
+        .map(
+          (entry) =>
+            `<li>${Object.entries(entry)
+              .filter(([, v]) => !isEmpty(v))
+              .map(([k, v]) =>
+                k === "url" || k === "image"
+                  ? `<a href="${escape(v)}" target="_blank">${k}</a>`
+                  : `<span><b>${escape(labelFor(k))}:</b> ${escape(v)}</span>`
+              )
+              .join(" ")}</li>`
+        )
+        .join("")}</ul>`;
+    }
+    return escape(value.join(", "));
+  }
+
+  if (typeof value === "object") {
+    return `<table class="nested">${Object.entries(value)
+      .map(
+        ([k, v]) =>
+          `<tr><th>${escape(labelFor(k))}</th><td class="${isEmpty(v) ? "missing" : ""}">${
+            isEmpty(v) ? "not found" : escape(v)
+          }</td></tr>`
+      )
+      .join("")}</table>`;
+  }
+
+  return escape(value);
+}
+
+/** Drop nulls and empty lists so an AI blank never overwrites a value the selectors found. */
+function prune(fields) {
+  return Object.fromEntries(
+    Object.entries(fields || {}).filter(([, value]) => !isEmpty(value))
+  );
+}
+
+function renderScraped(data, kind) {
+  // A couple of fields read better combined than as raw columns.
+  const view = {
+    ...data,
+    budget:
+      data.budget_min === null || data.budget_min === undefined
+        ? null
+        : `${data.budget_min}–${data.budget_max} ${data.currency}`,
+    hourly_rate_display:
+      data.hourly_rate === null || data.hourly_rate === undefined
+        ? null
+        : `${data.hourly_rate} ${data.currency}/hr`,
+  };
+
+  let found = 0;
+  let total = 0;
+  const sections = VIEWS[kind]
+    .map(([heading, keys]) => {
+      const rows = keys
+        .map((key) => {
+          const value = view[key];
+          total += 1;
+          if (!isEmpty(value)) found += 1;
+          return `<tr><th>${escape(labelFor(key))}</th><td>${valueHtml(value)}</td></tr>`;
+        })
+        .join("");
+      return `<h3>${escape(heading)}</h3><table class="scraped">${rows}</table>`;
+    })
+    .join("");
+
+  main.innerHTML = `
+    <p class="muted small tally">${found} of ${total} fields found${
+      found < total ? " — red rows mean Upwork's markup moved" : ""
+    }</p>
+    ${sections}
+    <div class="buttons">
+      <button id="copy">Copy JSON</button>
+      <button id="again" class="ghost">Read again</button>
+    </div>
+    <div class="buttons">
+      <button id="ai" class="ghost">Read with AI</button>
+      <button id="diag" class="ghost">Copy diagnostics</button>
+    </div>
+    <div class="buttons"><button id="collect" class="ghost">Collect my pages…</button></div>
+    <div id="send"></div>
+  `;
+
+  // The LLM reader is opt-in, never automatic. It costs money and seconds per page, so it happens
+  // because you chose it — not because a selector quietly broke.
+  $("ai").addEventListener("click", async () => {
+    const { apiUrl, token } = await settings();
+    if (!token) {
+      $("ai").textContent = "Needs a token — see Settings";
+      return;
+    }
+    $("ai").textContent = "Reading…";
+    try {
+      const page = await readPage("readText");
+      const response = await fetch(`${apiUrl}/ingest/parse`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+        body: JSON.stringify({ kind, url: page.url, text: page.text }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.detail || `Backend answered ${response.status}`);
+      // Merge, not replace: the selectors already got the id and URL right, and the model is
+      // never asked for those — it can't see the address bar.
+      renderScraped({ ...data, ...prune(body.fields), _read_by: body.model }, kind);
+    } catch (err) {
+      $("ai").textContent = escape(err.message).slice(0, 60);
+    }
+  });
+
+  $("diag").addEventListener("click", async () => {
+    $("diag").textContent = "Reading page structure…";
+    const report = await readPage("diagnose");
+    await navigator.clipboard.writeText(JSON.stringify(report, null, 2));
+    $("diag").textContent = `Copied — ${report.attribute_counts?.["data-test"] ?? 0} data-test attrs`;
+  });
+
+  $("copy").addEventListener("click", async () => {
+    await navigator.clipboard.writeText(JSON.stringify(data, null, 2));
+    $("copy").textContent = "Copied";
+    setTimeout(() => ($("copy").textContent = "Copy JSON"), 1200);
+  });
+  $("again").addEventListener("click", () => start());
+  $("collect")?.addEventListener("click", () => renderCollect());
+
+  void offerSend(data, kind);
+}
+
+/** Only offered when a token exists. Without one there is nothing useful to show here. */
+async function offerSend(data, kind) {
+  const { apiUrl, token } = await settings();
+  if (!token) return;
+
+  $("send").innerHTML = '<button id="push" class="ghost">Send to AutoLancers</button>';
+  $("push").addEventListener("click", async () => {
+    $("push").disabled = true;
+    $("push").textContent = "Sending…";
+    try {
+      const path = kind === "job" ? "/ingest/posting" : "/ingest/profile";
+      const response = await fetch(`${apiUrl}${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+        body: JSON.stringify(data),
+      });
+      if (response.status === 401) throw new Error("Token rejected — issue a new one in Settings.");
+      if (!response.ok) throw new Error(`Backend answered ${response.status}`);
+      const saved = await response.json();
+      $("send").innerHTML =
+        kind === "job"
+          ? `<p class="scored">Scored <b>${Math.round(saved.score)}</b>${
+              saved.rejected ? ` — ${escape(saved.rejection_reason)}` : ""
+            }</p>`
+          : `<p class="scored">Saved ${saved.skills} skills.</p>`;
+    } catch (err) {
+      $("send").innerHTML = `<p class="error small">${escape(err.message)}</p>`;
+    }
+  });
+}
+
+/**
+ * The only pages this extension will read.
+ *
+ * An allowlist, not a blocklist: "any upwork.com URL" would quietly include search results, message
+ * threads and settings pages — none of which we want, and some of which hold other people's data.
+ * Adding a page type has to be a deliberate edit here.
+ */
+const PAGES = [
+  {
+    kind: "profile",
+    label: "Freelancer profile",
+    example: "upwork.com/freelancers/~0abc…",
+    test: (url) => /upwork\.com\/freelancers\/~[0-9a-zA-Z]{10,}/.test(url),
+  },
+  {
+    kind: "job",
+    label: "Job posting",
+    example: "upwork.com/jobs/~021abc…",
+    test: (url) => /upwork\.com\/(?:nx\/)?jobs?\/[^/]*~[0-9a-zA-Z]{10,}/.test(url),
+  },
+];
+
+function pageFor(url) {
+  return PAGES.find((page) => page.test(url)) || null;
+}
+
+const STATE_KEY = "collect.state";
+
+/**
+ * The multi-page collector.
+ *
+ * Every page is off by default except the job listings. Turning on Messages is a separate,
+ * deliberate act, because that list is two-party data — the other half belongs to someone who
+ * never agreed to any of this — and only the room previews are ever read, never a conversation.
+ */
+const DEFAULT_ON = ["best_matches", "most_recent", "saved_jobs", "invites"];
+
+async function renderCollect() {
+  const { pages } = await chrome.runtime.sendMessage({ type: "collect:pages" });
+  const { [STATE_KEY]: state = {} } = await chrome.storage.local.get(STATE_KEY);
+
+  const checkboxes = pages
+    .map(
+      (p) => `<label class="check">
+        <input type="checkbox" value="${p.key}" ${DEFAULT_ON.includes(p.key) ? "checked" : ""} />
+        <span>${escape(p.label)}${p.key === "messages" ? ' <em>previews only</em>' : ""}</span>
+      </label>`
+    )
+    .join("");
+
+  main.innerHTML = `
+    <p class="muted small">Opens each page in a background tab, reads it, closes it. One at a time,
+    with a pause between — never in parallel.</p>
+    <div class="checks">${checkboxes}</div>
+    <label class="check deep">
+      <input id="deep" type="checkbox" />
+      <span>Also open each job for its full description
+        <em>listings only show a preview — this costs one page load per job</em></span>
+    </label>
+    <div class="buttons">
+      <button id="go">${state.running ? "Running…" : "Collect"}</button>
+      <button id="back" class="ghost">Back</button>
+    </div>
+    <div id="progress"></div>
+  `;
+
+  $("back").addEventListener("click", () => start());
+  $("go").addEventListener("click", async () => {
+    const keys = [...document.querySelectorAll(".checks input:checked")].map((i) => i.value);
+    if (!keys.length) return;
+    const { "collect.settings": stored = {} } = await chrome.storage.local.get("collect.settings");
+    await chrome.storage.local.set({
+      "collect.settings": { ...stored, fullDescriptions: $("deep").checked },
+    });
+    await chrome.runtime.sendMessage({ type: "collect:start", keys });
+    main.innerHTML = '<div id="progress"></div>';
+    void watch(pages.filter((p) => keys.includes(p.key)));
+  });
+
+  if (state.running) {
+    main.innerHTML = '<div id="progress"></div>';
+    void watch(pages);
+  }
+}
+
+/**
+ * Live export view.
+ *
+ * The checklist is the whole design: each page moves pending → reading → a count, so the animation
+ * carries information rather than decorating a wait. A bare spinner would tell you something is
+ * happening; this tells you what, how far, and what it found.
+ */
+function exportRow(page, state) {
+  const result = (state.results || {})[page.key];
+  const failure = (state.errors || {})[page.key];
+  const active = state.running && state.current === page.label;
+
+  let status = "pending";
+  let value = "";
+  if (failure) {
+    status = "failed";
+    value = escape(failure).slice(0, 40);
+  } else if (result) {
+    status = "done";
+    const n = result.count ?? (result.jobs || []).length;
+    value = `${n} found`;
+  } else if (active) {
+    status = "active";
+    value = "reading…";
+  }
+
+  return `<li class="step ${status}">
+    <span class="dot" aria-hidden="true"></span>
+    <span class="step-label">${escape(page.label)}</span>
+    <span class="step-value">${value}</span>
+  </li>`;
+}
+
+async function watch(pages) {
+  const progress = $("progress");
+  if (!progress) return;
+
+  for (;;) {
+    const { [STATE_KEY]: state = {} } = await chrome.storage.local.get(STATE_KEY);
+    const total = state.total ?? pages.length;
+    const done = state.done ?? 0;
+    const chosen = pages.filter(
+      (p) => (state.results || {})[p.key] || (state.errors || {})[p.key] || state.current === p.label || state.running
+    );
+    const listed = chosen.length ? chosen : pages;
+
+    const items = state.results || {};
+    const found = Object.values(items).reduce(
+      (sum, value) => sum + (value?.count ?? (value?.jobs || []).length ?? 0),
+      0
+    );
+    const failed = Object.keys(state.errors || {}).length;
+    const pct = total ? Math.round((done / total) * 100) : 0;
+
+    progress.innerHTML = `
+      ${
+        state.running
+          ? `<p class="exporting"><span class="spin" aria-hidden="true"></span>
+               ${
+                 state.phase === "descriptions"
+                   ? `Reading full descriptions… ${state.descDone ?? 0} of ${state.descTotal ?? 0}`
+                   : "Exporting data from your profile…"
+               }</p>`
+          : `<p class="exporting done-head">
+               <span class="tick" aria-hidden="true">✓</span> Export complete</p>`
+      }
+
+      <div class="bar" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100">
+        <span style="width:${pct}%"></span>
+      </div>
+      <p class="muted small bar-note">${done} of ${total} pages${
+        found ? ` · ${found} items` : ""
+      }${failed ? ` · ${failed} failed` : ""}</p>
+
+      <ul class="steps">${listed.map((p) => exportRow(p, state)).join("")}</ul>
+
+      ${
+        state.running
+          ? '<div class="buttons"><button id="stop" class="ghost">Stop</button></div>'
+          : `<div class="buttons">
+               <button id="copyall">Copy everything</button>
+               <button id="rerun" class="ghost">Run again</button>
+             </div>`
+      }
+    `;
+
+    $("stop")?.addEventListener("click", async () => {
+      $("stop").textContent = "Stopping…";
+      await chrome.runtime.sendMessage({ type: "collect:cancel" });
+    });
+    $("copyall")?.addEventListener("click", async () => {
+      await navigator.clipboard.writeText(JSON.stringify(state.results, null, 2));
+      $("copyall").textContent = "Copied";
+      setTimeout(() => ($("copyall").textContent = "Copy everything"), 1400);
+    });
+    $("rerun")?.addEventListener("click", () => renderCollect());
+
+    if (!state.running) return;
+    await new Promise((r) => setTimeout(r, 700));
+  }
+}
+
+async function start() {
+  const { [STATE_KEY]: running = {} } = await chrome.storage.local.get(STATE_KEY);
+  if (running.running) {
+    // A collection in flight is the most important thing on screen; the page reader can wait.
+    const { pages } = await chrome.runtime.sendMessage({ type: "collect:pages" });
+    main.innerHTML = '<div id="progress"></div>';
+    void watch(pages);
+    return;
+  }
+
+  const tab = await activeTab();
+  const page = pageFor(tab?.url || "");
+
+  if (!page) {
+    main.innerHTML = `
+      <p class="muted">This page isn't one AutoLancers reads directly.</p>
+      <ul class="pages">${PAGES.map(
+        (p) => `<li><b>${escape(p.label)}</b><span class="muted">${escape(p.example)}</span></li>`
+      ).join("")}</ul>
+      <div class="buttons"><button id="collect" class="ghost">Collect my pages…</button></div>`;
+    $("collect").addEventListener("click", () => renderCollect());
+    return;
+  }
+
+  const kind = page.kind;
+  main.innerHTML = `<p class="muted">Reading the ${escape(page.label.toLowerCase())}…</p>`;
+  try {
+    const data = await readPage(kind === "job" ? "readJob" : "readProfile");
+    if (!data) throw new Error("Nothing came back — try reloading the page first.");
+    if (data.error) throw new Error(data.error);
+    renderScraped(data, kind);
+  } catch (err) {
+    main.innerHTML = `<p class="error">${escape(err.message)}</p>
+      <div class="buttons"><button id="again">Try again</button></div>`;
+    $("again").addEventListener("click", () => start());
+  }
+}
+
+$("settings").addEventListener("click", (e) => {
+  e.preventDefault();
+  chrome.runtime.openOptionsPage();
+});
+
+void start();

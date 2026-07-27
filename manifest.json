@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "AutoLancers",
+  "version": "0.1.0",
+  "description": "Score the Upwork job you're looking at against your own profile, and mirror your profile into AutoLancers.",
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting",
+    "tabs"
+  ],
+  "host_permissions": [
+    "http://localhost:8010/*",
+    "https://www.upwork.com/*"
+  ],
+  "action": {
+    "default_popup": "src/popup/popup.html",
+    "default_title": "AutoLancers"
+  },
+  "options_page": "src/options/options.html",
+  "background": {
+    "service_worker": "src/background/worker.js",
+    "type": "module"
+  }
+}

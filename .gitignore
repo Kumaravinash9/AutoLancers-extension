@@ -1,0 +1,6 @@
+# No trailing slash: a `node_modules/` pattern matches directories only, and a symlinked
+# node_modules (which is what a linked local install leaves) would slip through and be committed
+# as a link into somebody's temp folder.
+node_modules
+*.zip
+.DS_Store

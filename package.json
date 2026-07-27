@@ -1,0 +1,12 @@
+{
+  "name": "autolancers-extension",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Chrome extension that reads the Upwork page you have open.",
+  "scripts": {
+    "test": "node test/run.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.49.0"
+  }
+}
