@@ -27,17 +27,29 @@ async function activeTab() {
 /** Inject the readers into the open tab, then call one by name. */
 async function readPage(fn) {
   const tab = await activeTab();
-  await chrome.scripting.executeScript({
+  const injected = await chrome.scripting.executeScript({
     target: { tabId: tab.id },
     files: ["src/content/platforms.js", "src/content/extract.js"],
   });
-  const [{ result }] = await chrome.scripting.executeScript({
+  const injectError = injected.find((frame) => frame.error)?.error;
+  if (injectError) throw new Error(`Couldn't load the readers: ${injectError}`);
+
+  const frames = await chrome.scripting.executeScript({
     target: { tabId: tab.id },
-    func: (name) =>
-      globalThis.ALExtract[name](),
+    func: (name) => {
+      // A tab that was open before the extension was updated still holds the previous script's
+      // globals, and this one will be missing. Saying so beats a silent undefined that reads as
+      // "the page had nothing on it".
+      if (!globalThis.ALExtract) throw new Error("Reload this page — the extension was updated.");
+      return globalThis.ALExtract[name]();
+    },
     args: [fn],
   });
-  return result;
+
+  // executeScript resolves with `error` set rather than rejecting when the injected code throws.
+  const frame = frames[0] || {};
+  if (frame.error) throw new Error(String(frame.error.message || frame.error));
+  return frame.result;
 }
 
 function escape(text) {

@@ -191,11 +191,39 @@ async function waitForTab(tabId) {
   await sleep(RENDER_WAIT_MS);
 }
 
-/** Inject the readers and call one, on a tab that is known to be ready. */
+/**
+ * Inject the readers and call one, on a tab that is known to be ready.
+ *
+ * `executeScript` does not reject when the injected code throws — it resolves with `error` set and
+ * `result` undefined. Ignoring that field turned every failure into a silent `null`, which is how
+ * four pages came back as `null` with no error recorded anywhere. Both the file injection and the
+ * call are checked.
+ */
 async function readInTab(tabId, func, args = []) {
-  await chrome.scripting.executeScript({ target: { tabId }, files: ["src/content/platforms.js", "src/content/extract.js"] });
-  const [{ result }] = await chrome.scripting.executeScript({ target: { tabId }, func, args });
-  return result;
+  const injected = await chrome.scripting.executeScript({
+    target: { tabId },
+    files: ["src/content/platforms.js", "src/content/extract.js"],
+  });
+  const injectError = injected.find((frame) => frame.error)?.error;
+  if (injectError) throw new Error(`Injecting the readers failed: ${injectError}`);
+
+  const guarded = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: () => Boolean(globalThis.ALExtract),
+  });
+  if (!guarded[0]?.result) {
+    // A tab open from before an update keeps the old script's globals; the new file's guard sees
+    // nothing to define and the readers are simply absent.
+    throw new Error("Reload this page — the extension was updated while it was open.");
+  }
+
+  const frames = await chrome.scripting.executeScript({ target: { tabId }, func, args });
+  const frame = frames[0] || {};
+  if (frame.error) throw new Error(String(frame.error.message || frame.error));
+  if (frame.result === undefined) {
+    throw new Error("The reader returned nothing — it may have thrown before returning.");
+  }
+  return frame.result;
 }
 
 /**
