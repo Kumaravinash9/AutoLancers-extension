@@ -502,4 +502,23 @@ $("settings").addEventListener("click", (e) => {
   chrome.runtime.openOptionsPage();
 });
 
-void start();
+/**
+ * Never leave the placeholder on screen.
+ *
+ * `start()` sets the first thing you see, so anything thrown before that point leaves "Reading the
+ * page…" sitting there forever — indistinguishable from a slow page, and the least useful thing a
+ * failure can look like. A missing identifier after a bad edit did exactly that.
+ */
+function fail(err) {
+  main.innerHTML = `
+    <p class="error">${escape(err?.message || String(err))}</p>
+    <p class="muted small">If this followed an update, reload the extension at
+      <code>chrome://extensions</code>.</p>
+    <div class="buttons"><button id="retry" class="ghost">Try again</button></div>`;
+  $("retry")?.addEventListener("click", () => void start().catch(fail));
+}
+
+window.addEventListener("unhandledrejection", (e) => fail(e.reason));
+window.addEventListener("error", (e) => fail(e.error || e.message));
+
+void start().catch(fail);
