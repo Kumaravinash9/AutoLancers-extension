@@ -12,6 +12,17 @@
  * that filter. Guessing a zero would silently reject a job for having no budget.
  */
 
+/**
+ * Injected more than once per page, so it must be idempotent.
+ *
+ * A classic script's top-level `const` cannot be declared twice, and the second injection threw
+ * "Identifier 'OVERLAY' has already been declared" — which kills the whole file, so every reader
+ * vanished after the first click. Guarding on the namespace makes re-injection a no-op, and hanging
+ * the readers off `globalThis` is what lets a separately-injected function find them at all.
+ */
+globalThis.ALExtract ||= (() => {
+  const { platformFor, currentPlatform } = globalThis.ALPlatforms;
+
 /** Every JSON-LD block on the page, parsed and flattened. Ignores malformed ones. */
 function structuredData() {
   const out = [];
@@ -787,6 +798,10 @@ function whichPage() {
   return "other";
 }
 
-// The popup injects this file, then calls one of these by name.
-// eslint-disable-next-line no-unused-expressions
-({ readJob, readProfile, diagnose, readText, readList, clickTo, afterRouteChange, whichPage });
+  // idFromUrl and canonicalJobUrl are exported for the tests: URL handling is where the two
+  // link shapes and the tracking parameter bite, so it is worth pinning directly.
+  return {
+    readJob, readProfile, diagnose, readText, readList, clickTo, afterRouteChange, whichPage,
+    idFromUrl, canonicalJobUrl,
+  };
+})();

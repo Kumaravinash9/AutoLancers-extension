@@ -29,7 +29,7 @@ async function read(fixture, fn) {
     Object.defineProperty(window, "__href", { value: href, configurable: true });
     const original = Object.getOwnPropertyDescriptor(Location.prototype, "href");
     eval(code);
-    return name === "readJob" ? readJob() : readProfile();
+    return name === "readJob" ? globalThis.ALExtract.readJob() : globalThis.ALExtract.readProfile();
   }, [src.replace(/location\.href/g, "window.__href"), fn, fixture === "job.html"
       ? "https://www.upwork.com/jobs/~021999888777666555"
       : "https://www.upwork.com/freelancers/~019abcdef123456789"]);
@@ -93,7 +93,7 @@ console.log("\nplatform routing:");
       ["https://example.com/jobs/123", "unsupported"],
     ];
     return cases.map(([url, want]) => {
-      const p = platformFor(url);
+      const p = globalThis.ALPlatforms.platformFor(url);
       const kind = !p ? "unsupported" : p.isProfilePage(url) ? "profile" : p.isJobPage(url) ? "job" : "other";
       return { url, want, got: kind, platform: p?.id || null, id: p ? p.jobId(url) : null };
     });
@@ -112,7 +112,7 @@ console.log("\nPeoplePerHour job feed:");
   const feed = await page.evaluate((code) => {
     Object.defineProperty(window, "__href", { value: "https://www.peopleperhour.com/freelance-jobs", configurable: true });
     eval(code);
-    return readList("pph_feed");
+    return globalThis.ALExtract.readList("pph_feed");
   }, src.replace(/location\.href/g, "window.__href"));
   check("platform stamped", feed.platform, "peopleperhour");
   check("jobs found", feed.count, 2);
@@ -131,7 +131,7 @@ console.log("\nreal Upwork job URL shapes:");
       "https://www.upwork.com/jobs/~022081843862124982859?referrer_url_path=%2Fbest-matches%2Fdetails%2F~022081843862124982859",
       "https://www.upwork.com/jobs/LLM-Infrastructure-Specialist-Local-Self-Hosted-Deployment_~022081864841446938615/?referrer_url_path=find_work_home",
     ];
-    return urls.map((u) => ({ id: idFromUrl(canonicalJobUrl(u)), url: canonicalJobUrl(u) }));
+    return urls.map((u) => ({ id: globalThis.ALExtract.idFromUrl(globalThis.ALExtract.canonicalJobUrl(u)), url: globalThis.ALExtract.canonicalJobUrl(u) }));
   }, src.replace(/location\.href/g, "window.__href"));
   check("plain /jobs/~id", shapes[0].id, "~022081843862124982859");
   check("slugged /jobs/Title_~id/", shapes[1].id, "~022081864841446938615");
@@ -149,7 +149,7 @@ await page.goto(pathToFileURL(new URL("fixtures/listing.html", import.meta.url).
 const listing = await page.evaluate((code) => {
   Object.defineProperty(window, "__href", { value: "https://www.upwork.com/nx/find-work/best-matches", configurable: true });
   eval(code);
-  return readList("best_matches");
+  return globalThis.ALExtract.readList("best_matches");
 }, src.replace(/location\.href/g, "window.__href"));
 check("deduped by job id", listing.jobs.length, 2);
 check("titles", listing.jobs.map((j) => j.title), ["Next.js dashboard for a logistics team", "FastAPI migration"]);
@@ -177,7 +177,7 @@ await page.setContent("<html><body><h1>Nothing here</h1></body></html>");
 const bare = await page.evaluate((code) => {
   Object.defineProperty(window, "__href", { value: "https://www.upwork.com/jobs/~021111111111111111", configurable: true });
   eval(code);
-  return readJob();
+  return globalThis.ALExtract.readJob();
 }, src.replace(/location\.href/g, "window.__href"));
 check("budget absent, not zero", [bare.budget_min, bare.budget_max], [null, null]);
 check("proposals absent, not zero", bare.proposal_count, null);

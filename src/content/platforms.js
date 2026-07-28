@@ -9,6 +9,15 @@
  * Adding a marketplace should mean adding an entry here, not another copy of the readers.
  */
 
+/**
+ * Injected more than once per page, so it must be idempotent.
+ *
+ * `chrome.scripting.executeScript({files})` evaluates a classic script: a top-level `const` is a
+ * redeclaration the second time, and a redeclaration is a SyntaxError that kills the entire file.
+ * Every click after the first then failed with "Identifier already declared" while the first
+ * appeared to work. Guarding on the namespace makes re-injection a no-op.
+ */
+globalThis.ALPlatforms ||= (() => {
 const PLATFORMS = {
   upwork: {
     id: "upwork",
@@ -96,3 +105,6 @@ function platformFor(url) {
 function currentPlatform() {
   return platformFor(location.href);
 }
+
+  return { PLATFORMS, platformFor, currentPlatform };
+})();

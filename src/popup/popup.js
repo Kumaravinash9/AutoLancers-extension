@@ -34,7 +34,7 @@ async function readPage(fn) {
   const [{ result }] = await chrome.scripting.executeScript({
     target: { tabId: tab.id },
     func: (name) =>
-      ({ readJob, readProfile, diagnose, readText, whichPage })[name](),
+      globalThis.ALExtract[name](),
     args: [fn],
   });
   return result;

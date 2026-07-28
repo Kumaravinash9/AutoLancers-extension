@@ -219,7 +219,7 @@ async function readOnePage(page, reuseTabId = null) {
       await sleep(300);
     }
     await waitForTab(tabId);
-    return await readInTab(tabId, (key) => readList(key), [page.key]);
+    return await readInTab(tabId, (key) => globalThis.ALExtract.readList(key), [page.key]);
   } finally {
     // Only close what we own. A reused tab is closed once, by the caller, at the end of the run.
     if (reuseTabId === null && tabId !== null) {
@@ -245,14 +245,14 @@ async function readByClicking(pages, tabId, results, errors, onDone) {
 
     await setState({ current: page.label });
     try {
-      const attempt = await readInTab(tabId, (fragment) => clickTo(fragment), [page.link]);
+      const attempt = await readInTab(tabId, (fragment) => globalThis.ALExtract.clickTo(fragment), [page.link]);
 
       if (attempt?.already) {
         // Nothing to navigate to; read where we stand.
       } else if (attempt?.clicked) {
         const settled = await readInTab(
           tabId,
-          (previous) => afterRouteChange(previous),
+          (previous) => globalThis.ALExtract.afterRouteChange(previous),
           [attempt.before]
         );
         if (!settled?.ok) throw new Error("The page did not finish rendering after the click.");
@@ -263,7 +263,7 @@ async function readByClicking(pages, tabId, results, errors, onDone) {
         await waitForTab(tabId);
       }
 
-      results[page.key] = await readInTab(tabId, (key) => readList(key), [page.key]);
+      results[page.key] = await readInTab(tabId, (key) => globalThis.ALExtract.readList(key), [page.key]);
     } catch (err) {
       errors[page.key] = String(err?.message || err);
     }
@@ -430,7 +430,7 @@ async function deepenDescriptions(results, lanes, onProgress) {
       }
       try {
         await waitForTab(tabId);
-        const result = await readInTab(tabId, () => readJob());
+        const result = await readInTab(tabId, () => globalThis.ALExtract.readJob());
         if (result?.error) problems[job.external_id] = result.error;
         if (result && !result.error) {
           // Write through to every copy of this job across the pages that listed it.
