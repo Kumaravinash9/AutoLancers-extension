@@ -52,18 +52,103 @@ const DEFAULT_CONCURRENCY = 1;
 
 export const DEFAULT_KEYS = ["best_matches", "most_recent", "saved_jobs", "invites"];
 
-// `link` is the fragment to look for when getting there by clicking; `url` is the fallback when
-// no such link is on the current page.
-export const PAGES = [
-  { key: "best_matches", label: "Best matches", link: "/nx/find-work/best-matches", url: "https://www.upwork.com/nx/find-work/best-matches" },
-  { key: "most_recent", label: "Most recent", link: "/nx/find-work/most-recent", url: "https://www.upwork.com/nx/find-work/most-recent" },
-  { key: "saved_jobs", label: "Saved jobs", link: "/nx/search/jobs/saved", url: "https://www.upwork.com/nx/search/jobs/saved/" },
-  { key: "invites", label: "Invites", link: "/nx/find-work/invites", url: "https://www.upwork.com/nx/find-work/invites" },
-  { key: "home", label: "Home", link: "/nx/wm/freelancer/home", url: "https://www.upwork.com/nx/wm/freelancer/home" },
-  { key: "contracts", label: "Contracts", link: "/nx/wm/freelancer/contracts", url: "https://www.upwork.com/nx/wm/freelancer/contracts" },
-  { key: "reports", label: "Reports (in progress)", link: "/nx/reports/overview", url: "https://www.upwork.com/nx/reports/overview/?tab=in-progress" },
-  { key: "messages", label: "Message rooms", link: "/ab/messages", url: "https://www.upwork.com/ab/messages/rooms/" },
-];
+/**
+ * The marketplaces this understands, and the pages worth collecting from each.
+ *
+ * Duplicated from `src/content/platforms.js` rather than imported: a service worker cannot read a
+ * content script's globals, and the alternative — a build step to share one file — is more
+ * machinery than a table of URLs deserves. The `pages` arrays must stay in step; the ids are what
+ * bind them.
+ */
+const PLATFORMS = {
+  upwork: {
+    id: "upwork",
+    label: "Upwork",
+    host: /(^|\.)upwork\.com$/,
+
+    // `~021…` appears in both link shapes Upwork uses: bare, and slug-then-id.
+    jobId: (url) => (url.match(/~[0-9a-zA-Z]{10,}/) || [null])[0],
+    jobLink: 'a[href*="/jobs/~"], a[href*="/jobs/"]',
+    isJobPage: (url) => /upwork\.com\/(?:nx\/)?jobs?\/[^/]*~[0-9a-zA-Z]{10,}/.test(url),
+    isProfilePage: (url) => /upwork\.com\/freelancers\/~[0-9a-zA-Z]{10,}/.test(url),
+    profileExample: "upwork.com/freelancers/~0abc…",
+    jobExample: "upwork.com/jobs/~021abc…",
+
+    pages: [
+      { key: "best_matches", label: "Best matches", link: "/nx/find-work/best-matches", url: "https://www.upwork.com/nx/find-work/best-matches", reads: "jobs" },
+      { key: "most_recent", label: "Most recent", link: "/nx/find-work/most-recent", url: "https://www.upwork.com/nx/find-work/most-recent", reads: "jobs" },
+      { key: "saved_jobs", label: "Saved jobs", link: "/nx/search/jobs/saved", url: "https://www.upwork.com/nx/search/jobs/saved/", reads: "jobs" },
+      { key: "invites", label: "Invites", link: "/nx/find-work/invites", url: "https://www.upwork.com/nx/find-work/invites", reads: "jobs" },
+      { key: "home", label: "Home", link: "/nx/wm/freelancer/home", url: "https://www.upwork.com/nx/wm/freelancer/home", reads: "jobs" },
+      { key: "contracts", label: "Contracts", link: "/nx/wm/freelancer/contracts", url: "https://www.upwork.com/nx/wm/freelancer/contracts", reads: "rows" },
+      { key: "reports", label: "Reports (in progress)", link: "/nx/reports/overview", url: "https://www.upwork.com/nx/reports/overview/?tab=in-progress", reads: "rows" },
+      { key: "messages", label: "Message rooms", link: "/ab/messages", url: "https://www.upwork.com/ab/messages/rooms/", reads: "rooms" },
+    ],
+  },
+
+  peopleperhour: {
+    id: "peopleperhour",
+    label: "PeoplePerHour",
+    host: /(^|\.)peopleperhour\.com$/,
+
+    // PPH uses a numeric id at the end of a slug: /freelance-jobs/…-4123456
+    jobId: (url) => (url.match(/-(\d{5,})(?:\/|$|\?)/) || [null, null])[1],
+    jobLink: 'a[href*="/freelance-jobs/"], a[href*="/job/"]',
+    isJobPage: (url) => /peopleperhour\.com\/(?:freelance-jobs|job)\/[^?]*\d{5,}/.test(url),
+    isProfilePage: (url) => /peopleperhour\.com\/freelancer\//.test(url),
+    profileExample: "peopleperhour.com/freelancer/…",
+    jobExample: "peopleperhour.com/freelance-jobs/…-4123456",
+
+    pages: [
+      { key: "pph_feed", label: "Job feed", link: "/freelance-jobs", url: "https://www.peopleperhour.com/freelance-jobs", reads: "jobs" },
+      { key: "pph_saved", label: "Saved jobs", link: "/site/saved-jobs", url: "https://www.peopleperhour.com/site/saved-jobs", reads: "jobs" },
+      { key: "pph_proposals", label: "My proposals", link: "/site/proposals", url: "https://www.peopleperhour.com/site/proposals", reads: "rows" },
+      { key: "pph_orders", label: "Orders", link: "/site/orders", url: "https://www.peopleperhour.com/site/orders", reads: "rows" },
+    ],
+  },
+
+  fiverr: {
+    id: "fiverr",
+    label: "Fiverr",
+    host: /(^|\.)fiverr\.com$/,
+
+    // Fiverr is a listing marketplace, not a bidding one: sellers publish gigs and buyers come to
+    // them. Buyer Requests — the closest thing it had to a job board — were removed in 2023. So
+    // there is no job feed to score here, and what is worth collecting is your own side of it:
+    // your gigs, your orders, your seller profile.
+    jobId: (url) => (url.match(/\/(?:gigs?|briefs?)\/([A-Za-z0-9_-]{6,})/) || [null, null])[1],
+    jobLink: 'a[href*="/gigs/"], a[href*="/briefs/"]',
+    isJobPage: (url) => /fiverr\.com\/(?:gigs?|briefs?)\//.test(url),
+    isProfilePage: (url) => /fiverr\.com\/(?!gigs?\/|briefs?\/|categories\/)[A-Za-z0-9_.-]+\/?$/.test(url),
+    profileExample: "fiverr.com/your-username",
+    jobExample: "fiverr.com/briefs/…",
+
+    pages: [
+      { key: "fvr_gigs", label: "My gigs", link: "/users", url: "https://www.fiverr.com/users/_/manage_gigs", reads: "rows" },
+      { key: "fvr_orders", label: "Orders", link: "/orders", url: "https://www.fiverr.com/orders", reads: "rows" },
+      { key: "fvr_briefs", label: "Briefs", link: "/briefs", url: "https://www.fiverr.com/briefs", reads: "jobs" },
+      { key: "fvr_inbox", label: "Inbox", link: "/inbox", url: "https://www.fiverr.com/inbox", reads: "rooms" },
+    ],
+  },
+};
+
+
+export const PLATFORM_LIST = Object.values(PLATFORMS);
+
+/** Pages for the site of the tab we are working in. */
+function pagesFor(platformId) {
+  return PLATFORMS[platformId]?.pages || [];
+}
+
+function platformForUrl(url) {
+  let host;
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    return null;
+  }
+  return PLATFORM_LIST.find((p) => p.host.test(host)) || null;
+}
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -108,7 +193,7 @@ async function waitForTab(tabId) {
 
 /** Inject the readers and call one, on a tab that is known to be ready. */
 async function readInTab(tabId, func, args = []) {
-  await chrome.scripting.executeScript({ target: { tabId }, files: ["src/content/extract.js"] });
+  await chrome.scripting.executeScript({ target: { tabId }, files: ["src/content/platforms.js", "src/content/extract.js"] });
   const [{ result }] = await chrome.scripting.executeScript({ target: { tabId }, func, args });
   return result;
 }
@@ -188,8 +273,11 @@ async function readByClicking(pages, tabId, results, errors, onDone) {
   }
 }
 
-async function run(selectedKeys) {
-  const pages = PAGES.filter((p) => selectedKeys.includes(p.key));
+async function run(selectedKeys, platformId = null) {
+  // Pages carry a platform id in their key, so a run never mixes two marketplaces by accident.
+  const all = platformId ? pagesFor(platformId) : PLATFORM_LIST.flatMap((p) => p.pages);
+  const pages = all.filter((p) => selectedKeys.includes(p.key));
+  if (!pages.length) return;
   await setState({
     running: true,
     cancelled: false,
@@ -209,7 +297,10 @@ async function run(selectedKeys) {
 
   // Clicking needs a tab already on Upwork to start from, and only makes sense one page at a time.
   if (navigateByClicking && (Number(concurrency) || 1) === 1) {
-    const [openTab] = await chrome.tabs.query({ url: "https://www.upwork.com/*" });
+    const platform = platformId ? PLATFORMS[platformId] : null;
+    const [openTab] = platform
+      ? await chrome.tabs.query({ url: `https://*.${platform.id === "peopleperhour" ? "peopleperhour" : platform.id}.com/*` })
+      : [];
     if (openTab) {
       await readByClicking(pages, openTab.id, results, errors, async (done) => {
         await setState({ done, results, errors });
@@ -218,7 +309,7 @@ async function run(selectedKeys) {
       await finish(results, errors);
       return;
     }
-    await setState({ note: "No Upwork tab open — opened one instead of clicking through." });
+    await setState({ note: "No tab open on that site — opened one instead of clicking through." });
   }
 
   // 0 (or anything past the page count) means one lane per page — the whole run in parallel.
@@ -416,7 +507,7 @@ async function badge(text, colour = "#14563f") {
 chrome.runtime.onMessage.addListener((message, _sender, respond) => {
   if (message?.type === "collect:start") {
     // Not awaited: the sender should not block for the length of a run.
-    void run(message.keys || PAGES.map((p) => p.key));
+    void run(message.keys || [], message.platform || null);
     respond({ started: true });
     return true;
   }
@@ -426,7 +517,20 @@ chrome.runtime.onMessage.addListener((message, _sender, respond) => {
     return true;
   }
   if (message?.type === "collect:pages") {
-    respond({ pages: PAGES });
+    // The popup asks for the site it is looking at; without one, everything we support.
+    // Either "what site is this tab on" or "give me this named platform" — the popup uses the
+    // second when you are not on a marketplace and pick one from the list.
+    const platform = message.platformId
+      ? PLATFORMS[message.platformId] || null
+      : message.url
+        ? platformForUrl(message.url)
+        : null;
+    respond({
+      platform: platform?.id || null,
+      label: platform?.label || null,
+      pages: platform ? platform.pages : PLATFORM_LIST.flatMap((p) => p.pages),
+      platforms: PLATFORM_LIST.map((p) => ({ id: p.id, label: p.label })),
+    });
     return true;
   }
   return false;

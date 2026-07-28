@@ -1,7 +1,20 @@
 # AutoLancers — Chrome extension
 
-Reads the Upwork page you have open and shows you exactly what it got. Optionally sends it to
+Reads the marketplace page you have open and shows you exactly what it got. Optionally sends it to
 AutoLancers to be scored and filed in your queue.
+
+Supports **Upwork**, **PeoplePerHour** and **Fiverr**. Adding another is an entry in
+`src/content/platforms.js` — the host, how a job id is written into its URLs, and which pages are
+worth collecting. The readers themselves are shared: anchoring on headings, `itemprop` and link
+shapes turned out to travel between sites, which is also what survived Upwork's markup matching
+none of the attributes we first guessed.
+
+### A note on Fiverr
+
+Fiverr is a listing marketplace, not a bidding one — sellers publish gigs and buyers come to them,
+and Buyer Requests were removed in 2023. There is no job feed to score there. What the collector
+reads is your own side of it: your gigs, your orders, your briefs and your inbox. If you are looking
+for jobs to bid on, Upwork and PeoplePerHour are the two that have them.
 
 Part of AutoLancers, alongside `AutoLancers-backend` and `AutoLancers-frontend`. It works on its
 own — scraping and copying needs no backend, no account and no token.
@@ -21,10 +34,11 @@ That's the whole setup. Open a supported page, click the toolbar icon.
 
 Only these, by explicit allowlist:
 
-| Page | URL |
-|---|---|
-| Freelancer profile | `upwork.com/freelancers/~0abc…` |
-| Job posting | `upwork.com/jobs/~021abc…` or `upwork.com/jobs/Some-Title_~021abc…/` |
+| Site | Profile | Job |
+|---|---|---|
+| Upwork | `/freelancers/~0abc…` | `/jobs/~021abc…` or `/jobs/Some-Title_~021abc…/` |
+| PeoplePerHour | `/freelancer/…` | `/freelance-jobs/…-4123456` |
+| Fiverr | `/your-username` | `/briefs/…` |
 
 Anything else — search results, message threads, settings — the popup declines and tells you which
 pages it handles. This is an allowlist rather than a blocklist on purpose: "any upwork.com URL"

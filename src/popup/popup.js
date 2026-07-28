@@ -29,18 +29,12 @@ async function readPage(fn) {
   const tab = await activeTab();
   await chrome.scripting.executeScript({
     target: { tabId: tab.id },
-    files: ["src/content/extract.js"],
+    files: ["src/content/platforms.js", "src/content/extract.js"],
   });
   const [{ result }] = await chrome.scripting.executeScript({
     target: { tabId: tab.id },
     func: (name) =>
-      name === "readJob"
-        ? readJob()
-        : name === "diagnose"
-          ? diagnose()
-          : name === "readText"
-            ? readText()
-            : readProfile(),
+      ({ readJob, readProfile, diagnose, readText, whichPage })[name](),
     args: [fn],
   });
   return result;
@@ -269,66 +263,66 @@ async function offerSend(data, kind) {
 }
 
 /**
- * The only pages this extension will read.
+ * Which page we are looking at, according to the platform registry.
  *
- * An allowlist, not a blocklist: "any upwork.com URL" would quietly include search results, message
- * threads and settings pages — none of which we want, and some of which hold other people's data.
- * Adding a page type has to be a deliberate edit here.
+ * The allowlist lives in `src/content/platforms.js` now, so supporting another marketplace is an
+ * entry there rather than another branch here.
  */
-const PAGES = [
-  {
-    kind: "profile",
-    label: "Freelancer profile",
-    example: "upwork.com/freelancers/~0abc…",
-    test: (url) => /upwork\.com\/freelancers\/~[0-9a-zA-Z]{10,}/.test(url),
-  },
-  {
-    kind: "job",
-    label: "Job posting",
-    example: "upwork.com/jobs/~021abc…",
-    test: (url) => /upwork\.com\/(?:nx\/)?jobs?\/[^/]*~[0-9a-zA-Z]{10,}/.test(url),
-  },
-];
-
-function pageFor(url) {
-  return PAGES.find((page) => page.test(url)) || null;
-}
-
 const STATE_KEY = "collect.state";
 
 /**
- * The multi-page collector.
+ * Which pages start ticked.
  *
- * Every page is off by default except the job listings. Turning on Messages is a separate,
- * deliberate act, because that list is two-party data — the other half belongs to someone who
- * never agreed to any of this — and only the room previews are ever read, never a conversation.
+ * Job listings only. Messages stays off because that list is two-party data — the other half
+ * belongs to someone who never agreed to any of this — and orders and contracts are rarely what
+ * someone is after on a first run.
  */
-const DEFAULT_ON = ["best_matches", "most_recent", "saved_jobs", "invites"];
+const DEFAULT_ON = /(best_matches|most_recent|saved_jobs|invites|pph_feed|fvr_briefs)/;
 
-async function renderCollect() {
-  const { pages } = await chrome.runtime.sendMessage({ type: "collect:pages" });
+let REGISTRY = null;
+
+async function registry(url) {
+  if (!REGISTRY) REGISTRY = await chrome.runtime.sendMessage({ type: "collect:pages", url });
+  return REGISTRY;
+}
+
+const PAGE_KINDS = [
+  { kind: "profile", label: "Freelancer profile", match: "isProfilePage", example: "profileExample" },
+  { kind: "job", label: "Job posting", match: "isJobPage", example: "jobExample" },
+];
+
+/**
+ * The page picker for a collection.
+ *
+ * `forPlatform` is passed when you chose a marketplace from the list instead of being on one — the
+ * collector can still run, it just opens its own tab rather than walking yours.
+ */
+async function renderCollect(forPlatform = null) {
+  const tab = await activeTab();
+  const reg = forPlatform
+    ? await chrome.runtime.sendMessage({ type: "collect:pages", platformId: forPlatform })
+    : await registry(tab?.url);
+  const { pages, platform, label } = reg;
   const { [STATE_KEY]: state = {} } = await chrome.storage.local.get(STATE_KEY);
 
-  const checkboxes = pages
-    .map(
-      (p) => `<label class="check">
-        <input type="checkbox" value="${p.key}" ${DEFAULT_ON.includes(p.key) ? "checked" : ""} />
-        <span>${escape(p.label)}${p.key === "messages" ? ' <em>previews only</em>' : ""}</span>
-      </label>`
-    )
-    .join("");
-
   main.innerHTML = `
-    <p class="muted small">Opens each page in a background tab, reads it, closes it. One at a time,
-    with a pause between — never in parallel.</p>
-    <div class="checks">${checkboxes}</div>
+    <p class="muted small">${escape(label || "This site")} — walks these pages one at a time, in a
+    tab you have open where it can.</p>
+    <div class="checks">${pages
+      .map(
+        (p) => `<label class="check">
+          <input type="checkbox" value="${escape(p.key)}" ${DEFAULT_ON.test(p.key) ? "checked" : ""} />
+          <span>${escape(p.label)}${p.reads === "rooms" ? " <em>previews only</em>" : ""}</span>
+        </label>`
+      )
+      .join("")}</div>
     <label class="check deep">
       <input id="deep" type="checkbox" />
       <span>Also open each job for its full description
-        <em>listings only show a preview — this costs one page load per job</em></span>
+        <em>listings only show a preview — one page load per job</em></span>
     </label>
     <div class="buttons">
-      <button id="go">${state.running ? "Running…" : "Collect"}</button>
+      <button id="go">Collect</button>
       <button id="back" class="ghost">Back</button>
     </div>
     <div id="progress"></div>
@@ -342,7 +336,7 @@ async function renderCollect() {
     await chrome.storage.local.set({
       "collect.settings": { ...stored, fullDescriptions: $("deep").checked },
     });
-    await chrome.runtime.sendMessage({ type: "collect:start", keys });
+    await chrome.runtime.sendMessage({ type: "collect:start", keys, platform });
     main.innerHTML = '<div id="progress"></div>';
     void watch(pages.filter((p) => keys.includes(p.key)));
   });
@@ -354,11 +348,11 @@ async function renderCollect() {
 }
 
 /**
- * Live export view.
+ * One line of the live checklist.
  *
- * The checklist is the whole design: each page moves pending → reading → a count, so the animation
- * carries information rather than decorating a wait. A bare spinner would tell you something is
- * happening; this tells you what, how far, and what it found.
+ * Each page moves pending → reading → a count, so the animation carries information rather than
+ * decorating a wait. A bare spinner would say something is happening; this says what, and what it
+ * found.
  */
 function exportRow(page, state) {
   const result = (state.results || {})[page.key];
@@ -372,8 +366,7 @@ function exportRow(page, state) {
     value = escape(failure).slice(0, 40);
   } else if (result) {
     status = "done";
-    const n = result.count ?? (result.jobs || []).length;
-    value = `${n} found`;
+    value = `${result.count ?? (result.jobs || []).length} found`;
   } else if (active) {
     status = "active";
     value = "reading…";
@@ -394,13 +387,7 @@ async function watch(pages) {
     const { [STATE_KEY]: state = {} } = await chrome.storage.local.get(STATE_KEY);
     const total = state.total ?? pages.length;
     const done = state.done ?? 0;
-    const chosen = pages.filter(
-      (p) => (state.results || {})[p.key] || (state.errors || {})[p.key] || state.current === p.label || state.running
-    );
-    const listed = chosen.length ? chosen : pages;
-
-    const items = state.results || {};
-    const found = Object.values(items).reduce(
+    const found = Object.values(state.results || {}).reduce(
       (sum, value) => sum + (value?.count ?? (value?.jobs || []).length ?? 0),
       0
     );
@@ -416,25 +403,22 @@ async function watch(pages) {
                    ? `Reading full descriptions… ${state.descDone ?? 0} of ${state.descTotal ?? 0}`
                    : "Exporting data from your profile…"
                }</p>`
-          : `<p class="exporting done-head">
-               <span class="tick" aria-hidden="true">✓</span> Export complete</p>`
+          : `<p class="exporting done-head"><span class="tick" aria-hidden="true">✓</span>
+               Export complete</p>`
       }
-
       <div class="bar" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100">
         <span style="width:${pct}%"></span>
       </div>
-      <p class="muted small bar-note">${done} of ${total} pages${
-        found ? ` · ${found} items` : ""
-      }${failed ? ` · ${failed} failed` : ""}</p>
-
-      <ul class="steps">${listed.map((p) => exportRow(p, state)).join("")}</ul>
-
+      <p class="muted small bar-note">${done} of ${total} pages${found ? ` · ${found} items` : ""}${
+        failed ? ` · ${failed} failed` : ""
+      }</p>
+      <ul class="steps">${pages.map((p) => exportRow(p, state)).join("")}</ul>
       ${
         state.running
           ? '<div class="buttons"><button id="stop" class="ghost">Stop</button></div>'
           : `<div class="buttons">
                <button id="copyall">Copy everything</button>
-               <button id="rerun" class="ghost">Run again</button>
+               <button id="rerun" class="ghost">Back</button>
              </div>`
       }
     `;
@@ -448,7 +432,7 @@ async function watch(pages) {
       $("copyall").textContent = "Copied";
       setTimeout(() => ($("copyall").textContent = "Copy everything"), 1400);
     });
-    $("rerun")?.addEventListener("click", () => renderCollect());
+    $("rerun")?.addEventListener("click", () => start());
 
     if (!state.running) return;
     await new Promise((r) => setTimeout(r, 700));
@@ -457,30 +441,50 @@ async function watch(pages) {
 
 async function start() {
   const { [STATE_KEY]: running = {} } = await chrome.storage.local.get(STATE_KEY);
+  const tab = await activeTab();
+
   if (running.running) {
     // A collection in flight is the most important thing on screen; the page reader can wait.
-    const { pages } = await chrome.runtime.sendMessage({ type: "collect:pages" });
+    const { pages } = await registry(tab?.url);
     main.innerHTML = '<div id="progress"></div>';
     void watch(pages);
     return;
   }
 
-  const tab = await activeTab();
-  const page = pageFor(tab?.url || "");
+  const reg = await registry(tab?.url);
 
-  if (!page) {
+  if (!reg.platform) {
+    // Off a supported site the page readers have nothing to read, but a collection still can —
+    // it opens its own tab. Offering the marketplaces as buttons keeps that reachable instead of
+    // making you navigate somewhere first just to find the button.
     main.innerHTML = `
-      <p class="muted">This page isn't one AutoLancers reads directly.</p>
-      <ul class="pages">${PAGES.map(
-        (p) => `<li><b>${escape(p.label)}</b><span class="muted">${escape(p.example)}</span></li>`
+      <p class="muted">Not on a marketplace page. Collect from:</p>
+      <div class="buttons stack">${reg.platforms
+        .map((p) => `<button class="ghost pick" data-id="${escape(p.id)}">${escape(p.label)}</button>`)
+        .join("")}</div>`;
+    for (const button of document.querySelectorAll(".pick")) {
+      button.addEventListener("click", () => renderCollect(button.dataset.id));
+    }
+    return;
+  }
+
+  // Which kind of page, asked of the platform itself.
+  const kind = await readPage("whichPage");
+
+  if (!kind || kind === "other") {
+    main.innerHTML = `
+      <p class="muted">This ${escape(reg.label)} page isn't one AutoLancers reads directly.</p>
+      <ul class="pages">${PAGE_KINDS.map(
+        (k) => `<li><b>${escape(k.label)}</b></li>`
       ).join("")}</ul>
-      <div class="buttons"><button id="collect" class="ghost">Collect my pages…</button></div>`;
+      <div class="buttons"><button id="collect" class="ghost">Collect my ${escape(
+        reg.label
+      )} pages…</button></div>`;
     $("collect").addEventListener("click", () => renderCollect());
     return;
   }
 
-  const kind = page.kind;
-  main.innerHTML = `<p class="muted">Reading the ${escape(page.label.toLowerCase())}…</p>`;
+  main.innerHTML = `<p class="muted">Reading the ${kind === "job" ? "job" : "profile"}…</p>`;
   try {
     const data = await readPage(kind === "job" ? "readJob" : "readProfile");
     if (!data) throw new Error("Nothing came back — try reloading the page first.");

@@ -8,7 +8,10 @@ import { chromium } from "playwright";
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
-const src = readFileSync(new URL("../src/content/extract.js", import.meta.url), "utf8");
+const src =
+  readFileSync(new URL("../src/content/platforms.js", import.meta.url), "utf8") +
+  "\n" +
+  readFileSync(new URL("../src/content/extract.js", import.meta.url), "utf8");
 const browser = await chromium.launch();
 const page = await browser.newPage();
 let failures = 0;
@@ -75,6 +78,50 @@ check("certifications skip the popover upsell", profile.certifications, ["AWS So
 // The bug this replaced: an "Education" item in the sidebar checklist pulled every nav heading in.
 check("no education section means none reported", profile.education, []);
 check("nav headings never leak into a section", JSON.stringify(profile).includes("Promote with ads"), false);
+
+console.log("\nplatform routing:");
+{
+  const routed = await page.evaluate((code) => {
+    eval(code);
+    const cases = [
+      ["https://www.upwork.com/jobs/~022081843862124982859", "job"],
+      ["https://www.upwork.com/freelancers/~0139befba192c820d1", "profile"],
+      ["https://www.peopleperhour.com/freelance-jobs/technology/build-a-dashboard-4123456", "job"],
+      ["https://www.peopleperhour.com/freelancer/avinash-k", "profile"],
+      ["https://www.fiverr.com/briefs/abc123def", "job"],
+      ["https://www.fiverr.com/avinashk", "profile"],
+      ["https://example.com/jobs/123", "unsupported"],
+    ];
+    return cases.map(([url, want]) => {
+      const p = platformFor(url);
+      const kind = !p ? "unsupported" : p.isProfilePage(url) ? "profile" : p.isJobPage(url) ? "job" : "other";
+      return { url, want, got: kind, platform: p?.id || null, id: p ? p.jobId(url) : null };
+    });
+  }, src);
+  for (const r of routed) {
+    check(`${r.platform || "no platform"}: ${r.url.replace(/^https:\/\/www\./, "").slice(0, 46)}`, r.got, r.want);
+  }
+  check("pph numeric id", routed[2].id, "4123456");
+  check("upwork tilde id", routed[0].id, "~022081843862124982859");
+  check("off-platform host is refused", routed[6].platform, null);
+}
+
+console.log("\nPeoplePerHour job feed:");
+{
+  await page.goto(pathToFileURL(new URL("fixtures/pph-feed.html", import.meta.url).pathname).href);
+  const feed = await page.evaluate((code) => {
+    Object.defineProperty(window, "__href", { value: "https://www.peopleperhour.com/freelance-jobs", configurable: true });
+    eval(code);
+    return readList("pph_feed");
+  }, src.replace(/location\.href/g, "window.__href"));
+  check("platform stamped", feed.platform, "peopleperhour");
+  check("jobs found", feed.count, 2);
+  check("numeric ids", feed.jobs.map((j) => j.external_id), ["4123456", "4123999"]);
+  check("titles", feed.jobs.map((j) => j.title), ["Build a Next.js dashboard", "FastAPI microservice"]);
+  check("GBP budget", feed.jobs[0].budget, "£1,200");
+  check("description is prose", feed.jobs[0].description.startsWith("We need a reporting dashboard"), true);
+  check("no budget in description", /£1,200/.test(feed.jobs[0].description), false);
+}
 
 console.log("\nreal Upwork job URL shapes:");
 {

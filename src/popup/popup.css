@@ -422,3 +422,7 @@ main h3 {
     transition: none;
   }
 }
+
+.buttons.stack {
+  flex-direction: column;
+}

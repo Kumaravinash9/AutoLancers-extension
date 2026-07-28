@@ -100,9 +100,15 @@ function currencyOf(text) {
  * rather than an update.
  */
 function idFromUrl(href) {
+  const platform = platformFor(href) || currentPlatform();
+  if (platform) {
+    const id = platform.jobId(href);
+    if (id) return id;
+  }
+  // Fallback for a link whose host we can't resolve — a relative href on a page we do know.
   const tilde = href.match(/~[0-9a-zA-Z]{10,}/);
   if (tilde) return tilde[0];
-  const numeric = href.match(/\/jobs?\/(?:[^/]*?)(\d{8,})/);
+  const numeric = href.match(/[-/](\d{6,})(?:\/|$|\?)/);
   return numeric ? numeric[1] : null;
 }
 
@@ -274,7 +280,7 @@ function readJob() {
   const proposalMatch = pageText.match(/Proposals[^0-9]{0,40}(\d+)\s*(?:to|–|-)?\s*(\d+)?/i);
 
   return {
-    platform: "upwork",
+    platform: currentPlatform()?.id || "unknown",
     external_id: externalId,
     url,
     title:
@@ -349,7 +355,10 @@ function blocks(containerSelectors, mapper, limit = 25) {
 
 function readProfile() {
   const url = location.href.split("?")[0];
-  const username = idFromUrl(url) || (url.match(/\/freelancers\/([^/]+)/) || [])[1];
+  const username =
+    (url.match(/~[0-9a-zA-Z]{10,}/) || [])[0] ||
+    (url.match(/\/(?:freelancers?|freelancer)\/([^/?]+)/) || [])[1] ||
+    (url.match(/^https?:\/\/[^/]+\/([A-Za-z0-9_.-]+)\/?$/) || [])[1];
   if (!username) {
     return { error: "Open a freelancer profile page first." };
   }
@@ -367,7 +376,7 @@ function readProfile() {
   })();
 
   return {
-    platform: "upwork",
+    platform: currentPlatform()?.id || "unknown",
     username,
     url,
 
@@ -568,7 +577,10 @@ function readJobCards(limit = 60) {
   const seen = new Set();
   const cards = [];
 
-  for (const anchor of document.querySelectorAll('a[href*="/jobs/~"], a[href*="/jobs/"]')) {
+  const platform = currentPlatform();
+  const selector = platform?.jobLink || 'a[href*="/jobs/"]';
+
+  for (const anchor of document.querySelectorAll(selector)) {
     if (isChrome(anchor)) continue;
 
     const href = canonicalJobUrl(anchor.getAttribute("href"));
@@ -724,31 +736,57 @@ function afterRouteChange(previousUrl, timeoutMs = 15000) {
 }
 
 /** One entry point the collector calls with the page key it navigated to. */
+/**
+ * One entry point the collector calls with the page key it navigated to.
+ *
+ * Which reader runs comes from the page's own `reads` declaration in the platform registry, not
+ * from a list of key names — so adding a marketplace does not mean editing a switch here.
+ */
 function readList(key) {
-  const base = { key, url: location.href.split("?")[0], title: document.title, at: new Date().toISOString() };
+  const platform = currentPlatform();
+  const page = platform?.pages.find((p) => p.key === key);
+  const base = {
+    key,
+    platform: platform?.id || "unknown",
+    url: location.href.split("?")[0],
+    title: document.title,
+    at: new Date().toISOString(),
+  };
 
-  if (["best_matches", "most_recent", "saved_jobs", "invites"].includes(key)) {
-    const jobs = readJobCards();
-    return { ...base, count: jobs.length, jobs };
+  switch (page?.reads) {
+    case "jobs": {
+      const jobs = readJobCards();
+      return { ...base, count: jobs.length, jobs };
+    }
+    case "rows": {
+      // Same-host links only. A row is a link to a detail page; anything off-site is an advert or
+      // a help article, and `/./` would have swept in both.
+      const rows = readRows(new RegExp(`^https?://[^/]*${location.hostname.replace(/\./g, "\\.")}/`));
+      return {
+        ...base,
+        count: rows.length,
+        rows,
+        text: clean(document.body.innerText).slice(0, 3000),
+      };
+    }
+    case "rooms": {
+      const rooms = readMessageRooms();
+      return { ...base, count: rooms.length, rooms };
+    }
+    default:
+      return { ...base, error: `No reader configured for ${key}` };
   }
-  if (key === "contracts") {
-    const rows = readRows(/\/(?:nx\/wm|contracts?)\//i);
-    return { ...base, count: rows.length, contracts: rows };
-  }
-  if (key === "reports") {
-    const rows = readRows(/\/(?:nx\/reports|contracts?)\//i);
-    return { ...base, count: rows.length, rows, totals: clean(document.body.innerText).slice(0, 600) };
-  }
-  if (key === "messages") {
-    const rooms = readMessageRooms();
-    return { ...base, count: rooms.length, rooms };
-  }
-  if (key === "home") {
-    return { ...base, jobs: readJobCards(30), text: clean(document.body.innerText).slice(0, 3000) };
-  }
-  return { ...base, error: `No reader for ${key}` };
+}
+
+/** Which of the readers applies here, decided by the platform rather than by the popup. */
+function whichPage() {
+  const platform = currentPlatform();
+  if (!platform) return null;
+  if (platform.isProfilePage(location.href)) return "profile";
+  if (platform.isJobPage(location.href)) return "job";
+  return "other";
 }
 
 // The popup injects this file, then calls one of these by name.
 // eslint-disable-next-line no-unused-expressions
-({ readJob, readProfile, diagnose, readText, readList, clickTo, afterRouteChange });
+({ readJob, readProfile, diagnose, readText, readList, clickTo, afterRouteChange, whichPage });
