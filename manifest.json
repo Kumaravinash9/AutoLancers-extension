@@ -15,6 +15,13 @@
     "https://www.peopleperhour.com/*",
     "https://www.fiverr.com/*"
   ],
+  "externally_connectable": {
+    "matches": [
+      "http://localhost:3000/*",
+      "https://autolancers.app/*",
+      "https://*.autolancers.app/*"
+    ]
+  },
   "action": {
     "default_popup": "src/popup/popup.html",
     "default_title": "AutoLancers"

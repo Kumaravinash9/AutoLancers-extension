@@ -26,6 +26,7 @@
  */
 
 import { PUSH_DEFAULTS, connection, pushPage } from "./api.js";
+import { announce, openBridge } from "./bridge.js";
 
 const STATE_KEY = "collect.state";
 const SETTINGS_KEY = "collect.settings";
@@ -61,21 +62,19 @@ export const DEFAULT_KEYS = ["best_matches", "most_recent", "saved_jobs", "invit
  * content script's globals, and the alternative — a build step to share one file — is more
  * machinery than a table of URLs deserves. The `pages` arrays must stay in step; the ids are what
  * bind them.
+ *
+ * Only what the worker actually navigates with: the host, the id, the label and the pages. The URL
+ * matchers used to be copied here too and had already drifted out of step — this copy still held the
+ * Fiverr pattern that matched `/inbox` and `/orders` as profiles. Nothing could have used them
+ * either: a function cannot cross a `chrome.runtime` message boundary, so they were dropped from the
+ * response before any caller saw them. Deciding what a page *is* belongs to the content script, which
+ * is on the page.
  */
 const PLATFORMS = {
   upwork: {
     id: "upwork",
     label: "Upwork",
     host: /(^|\.)upwork\.com$/,
-
-    // `~021…` appears in both link shapes Upwork uses: bare, and slug-then-id.
-    jobId: (url) => (url.match(/~[0-9a-zA-Z]{10,}/) || [null])[0],
-    jobLink: 'a[href*="/jobs/~"], a[href*="/jobs/"]',
-    isJobPage: (url) => /upwork\.com\/(?:nx\/)?jobs?\/[^/]*~[0-9a-zA-Z]{10,}/.test(url),
-    isProfilePage: (url) => /upwork\.com\/freelancers\/~[0-9a-zA-Z]{10,}/.test(url),
-    profileExample: "upwork.com/freelancers/~0abc…",
-    jobExample: "upwork.com/jobs/~021abc…",
-
     pages: [
       { key: "best_matches", label: "Best matches", link: "/nx/find-work/best-matches", url: "https://www.upwork.com/nx/find-work/best-matches", reads: "jobs" },
       { key: "most_recent", label: "Most recent", link: "/nx/find-work/most-recent", url: "https://www.upwork.com/nx/find-work/most-recent", reads: "jobs" },
@@ -92,15 +91,6 @@ const PLATFORMS = {
     id: "peopleperhour",
     label: "PeoplePerHour",
     host: /(^|\.)peopleperhour\.com$/,
-
-    // PPH uses a numeric id at the end of a slug: /freelance-jobs/…-4123456
-    jobId: (url) => (url.match(/-(\d{5,})(?:\/|$|\?)/) || [null, null])[1],
-    jobLink: 'a[href*="/freelance-jobs/"], a[href*="/job/"]',
-    isJobPage: (url) => /peopleperhour\.com\/(?:freelance-jobs|job)\/[^?]*\d{5,}/.test(url),
-    isProfilePage: (url) => /peopleperhour\.com\/freelancer\//.test(url),
-    profileExample: "peopleperhour.com/freelancer/…",
-    jobExample: "peopleperhour.com/freelance-jobs/…-4123456",
-
     pages: [
       { key: "pph_feed", label: "Job feed", link: "/freelance-jobs", url: "https://www.peopleperhour.com/freelance-jobs", reads: "jobs" },
       { key: "pph_saved", label: "Saved jobs", link: "/site/saved-jobs", url: "https://www.peopleperhour.com/site/saved-jobs", reads: "jobs" },
@@ -113,18 +103,6 @@ const PLATFORMS = {
     id: "fiverr",
     label: "Fiverr",
     host: /(^|\.)fiverr\.com$/,
-
-    // Fiverr is a listing marketplace, not a bidding one: sellers publish gigs and buyers come to
-    // them. Buyer Requests — the closest thing it had to a job board — were removed in 2023. So
-    // there is no job feed to score here, and what is worth collecting is your own side of it:
-    // your gigs, your orders, your seller profile.
-    jobId: (url) => (url.match(/\/(?:gigs?|briefs?)\/([A-Za-z0-9_-]{6,})/) || [null, null])[1],
-    jobLink: 'a[href*="/gigs/"], a[href*="/briefs/"]',
-    isJobPage: (url) => /fiverr\.com\/(?:gigs?|briefs?)\//.test(url),
-    isProfilePage: (url) => /fiverr\.com\/(?!gigs?\/|briefs?\/|categories\/)[A-Za-z0-9_.-]+\/?$/.test(url),
-    profileExample: "fiverr.com/your-username",
-    jobExample: "fiverr.com/briefs/…",
-
     pages: [
       { key: "fvr_gigs", label: "My gigs", link: "/users", url: "https://www.fiverr.com/users/_/manage_gigs", reads: "rows" },
       { key: "fvr_orders", label: "Orders", link: "/orders", url: "https://www.fiverr.com/orders", reads: "rows" },
@@ -169,6 +147,42 @@ async function setState(patch) {
 }
 
 /**
+ * What the app is told, which is not everything the popup knows.
+ *
+ * Progress and the marketplace's own rows stay here. The app has no use for a per-page checklist — it
+ * is not the thing running the collection — and the scraped jobs reach it through the backend, where
+ * they are scored. What it needs is whether reading is working, and enough to say so in a sentence.
+ */
+function summarise(state) {
+  const pushes = Object.values(state.pushes || {});
+  return {
+    running: Boolean(state.running),
+    platform: state.platform || null,
+    session: state.session || null,
+    note: state.note || null,
+    pages: { done: state.done ?? 0, total: state.total ?? 0 },
+    failed: Object.keys(state.errors || {}).length,
+    stored: pushes.reduce((sum, p) => sum + (p?.stored || 0), 0),
+    finishedAt: state.finishedAt || null,
+  };
+}
+
+/** The current state, for an app tab that just connected and has missed everything so far. */
+async function bridgeState() {
+  const { [STATE_KEY]: state = {} } = await chrome.storage.local.get(STATE_KEY);
+  return { type: "state", ...summarise(state) };
+}
+
+/** Set the state and tell the app in one act, so the two can never disagree. */
+async function publish(patch) {
+  const next = await setState(patch);
+  announce({ type: "state", ...summarise(next) });
+  return next;
+}
+
+openBridge({ state: bridgeState, version: chrome.runtime.getManifest().version });
+
+/**
  * File one finished page with the backend.
  *
  * As each page completes rather than in one batch at the end: a run that is cancelled or that loses
@@ -199,7 +213,7 @@ function sessionProblem(result) {
 
 /** Stop the run and say why, in words that name the fix rather than the symptom. */
 async function haltForSession(status, detail, done, total) {
-  await setState({
+  await publish({
     cancelled: true,
     running: false,
     session: { status, detail, at: Date.now() },
@@ -388,8 +402,9 @@ async function run(selectedKeys, platformId = null) {
   const all = platformId ? pagesFor(platformId) : PLATFORM_LIST.flatMap((p) => p.pages);
   const pages = all.filter((p) => selectedKeys.includes(p.key));
   if (!pages.length) return;
-  await setState({
+  await publish({
     running: true,
+    platform: platformId,
     cancelled: false,
     done: 0,
     total: pages.length,
@@ -421,7 +436,7 @@ async function run(selectedKeys, platformId = null) {
       : [];
     if (openTab) {
       await readByClicking(pages, openTab.id, results, errors, pushes, platform.id, async (done) => {
-        await setState({ done, results, errors });
+        await publish({ done, results, errors });
         await badge(`${done}/${pages.length}`);
       });
       await finish(results, errors, pushes, platform.id, pages);
@@ -466,7 +481,7 @@ async function run(selectedKeys, platformId = null) {
       }
 
       finished += 1;
-      await setState({ done: finished, results, errors });
+      await publish({ done: finished, results, errors });
       await badge(`${finished}/${pages.length}`);
 
       // A wall in front of one page is a wall in front of all of them. Emptying the queue stops the
@@ -517,7 +532,7 @@ async function finish(results, errors, pushes = {}, platformId = null, pages = [
     }
   }
 
-  await setState({
+  await publish({
     running: false,
     current: null,
     phase: null,
@@ -656,7 +671,7 @@ chrome.runtime.onMessage.addListener((message, _sender, respond) => {
     return true;
   }
   if (message?.type === "collect:cancel") {
-    void setState({ cancelled: true, running: false });
+    void publish({ cancelled: true, running: false });
     respond({ cancelled: true });
     return true;
   }

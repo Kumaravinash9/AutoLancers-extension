@@ -221,6 +221,37 @@ lower the risk. They do not remove it.
 If you add a `chrome.alarms` trigger to `src/background/worker.js`, you have crossed from "a tool I
 ran" to "a bot that watches the site". That is the wrong side of the line.
 
+## Telling the app directly
+
+The extension and the AutoLancers app run in the same browser, so the interesting moment — you pressed
+Collect and Upwork asked you to sign in — can reach an open dashboard tab without a backend round trip.
+
+The mechanism is `externally_connectable`: the app's page opens a port to the extension and the
+extension answers. **Nothing is injected into your own site** — the page initiates, the manifest's
+`matches` list is the whole trust boundary, and the app works fine with the extension absent
+(`chrome.runtime` simply isn't there).
+
+```
+app tab                                    extension
+   |-- sendMessage("ping") --------------->|  installed? which version?
+   |-- connect("autolancers") ------------>|  registers the port
+   |<-- {type:"state", ...} ---------------|  current state, immediately on connect
+   |<-- {type:"state", ...} ---------------|  and again on each page, halt, or finish
+```
+
+What crosses is deliberately small: whether a run is going, how many pages are done, how many were
+filed, and whether reading is broken. Not the scraped rows — the app gets those from the backend, where
+they're scored — and not the per-page checklist, which is the popup's business.
+
+A web page can't discover an extension's id, and a "Load unpacked" build gets a different one per
+machine. Find it at `chrome://extensions` and set `NEXT_PUBLIC_EXTENSION_ID` in the frontend.
+
+**This does not replace the recorded status.** A port only reaches a tab that's open at that moment,
+and during a collection you're looking at the marketplace, not at the dashboard — so the common case is
+that nobody was listening. `capture_statuses` on the backend is what covers opening the app an hour
+later, which is the case the whole idea exists for. The live channel is for immediacy; the record is
+for truth.
+
 ## Sending to AutoLancers (optional)
 
 Leave the token empty and the extension is a scraper with a Copy button. Add one and a
