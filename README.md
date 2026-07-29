@@ -30,6 +30,58 @@ repo root.
 
 That's the whole setup. Open a supported page, click the toolbar icon.
 
+## When you're not signed in
+
+The failure mode this guards against has no symptom. Signed out of Upwork, every find-work URL
+redirects to a login page that **loads perfectly** — so the tab reaches `complete`, nothing throws,
+and the job reader finds no `/jobs/~id` links on it and returns an empty list. Left alone, a
+logged-out collection reports **"0 found" on all eight pages**, which reads exactly like a quiet day
+on the marketplace, and files `stored: 0` to the backend as though that were true.
+
+So every read checks the page before parsing it, and reports one of three states:
+
+| State | What it means | What happens |
+|---|---|---|
+| `ok` | it's the page we asked for | read it |
+| `signed_out` | a login wall | the run **stops**, the popup says so, the backend is told |
+| `blocked` | a challenge or rate limit | the run **stops** — more pages makes it worse |
+
+Detected by URL *and* by content, because a marketplace can render a login wall in place without
+changing the URL: a redirect to a known login path, or a password field alongside a "log in" heading,
+or Upwork's own challenge wording (*"There was an error loading this page"* — the text that appeared
+when eight pages were read at once).
+
+The run halts on the **first** page that hits a wall. There's nothing behind it, so the remaining
+seven are seven pointless requests — and if the state is `blocked`, seven requests to a site that has
+just said it's unhappy, which is the worst possible response to bot detection.
+
+The status is also sent to the backend, and `GET /ingest/status` serves it back per platform. Since
+the AutoLancers frontend is open in the same browser, that's where *"your Upwork session expired"*
+belongs — next to the board of scores that is quietly going stale.
+
+## Whose profile is it?
+
+**No URL pattern can tell your profile from anyone else's.** `upwork.com/freelancers/~01…` matches
+every freelancer on the site. That matters because `POST /ingest/profile` mirrors what it's sent onto
+*your* profile row — the one every score in the app is computed from — so a stranger's profile sent
+there overwrites your name, tagline, rate and skills with theirs.
+
+The marketplace itself knows which one is yours, and it puts a link to it in its own account menu.
+`findOwnProfile()` follows that link — header and account-menu scopes only, because a profile link
+inside a job card or a review is *someone else's*. Nothing is configured and nothing is hardcoded to
+one account: it answers for whoever is signed in, on whatever machine.
+
+`readProfile()` then reports `is_own` by comparing the account id in the URL against the id that link
+carries — by id, not by name, and not by whether an "Edit profile" button is showing. `null` means
+undecidable, and the backend refuses a `null` exactly as it refuses a `false`: "probably yours" is not
+a good enough reason to overwrite that row.
+
+Fiverr needed a second fix here. A seller profile is `fiverr.com/<username>`, the same shape as most
+of the site's own pages, and the old matcher excluded only gigs, briefs and categories — so `/inbox`,
+`/orders`, `/settings` and `/users` all read as "a profile". A page misread as a profile gets scraped
+as one. There's now a reserved-word list, erring towards "not a profile": a profile missed is a button
+that doesn't appear, while a settings page mistaken for one is the wrong thing written into your row.
+
 ## What it reads
 
 Only these, by explicit allowlist:
@@ -199,6 +251,88 @@ cannot be recovered — issue another and revoke the old.
 Captured postings are stored with `discovery_method = PASTE_IN`, distinct from the poller's
 `API_POLL`, so "where did this come from?" always has a true answer.
 
+### Filing a whole collection
+
+With a token set, each collected page is sent as it finishes — `POST /ingest/collection`, one request
+per page. Per page rather than one payload at the end, so a run you cancel keeps everything it
+already read.
+
+Every job-listing page lands in the same table. **Best matches and Most recent are not two kinds of
+thing** — they are two places the marketplace shows the same postings — so both become `projects`,
+deduped on `(platform, external_id)`: the marketplace's own id, taken from the link's `href` and
+never from text. A job on both pages is one row, scored once. Which page it was seen on is recorded
+in `bid_information.source_page`, not in the identity of the row.
+
+The payload is raw on purpose. `budget` goes as `"$500.00 - $1,000.00"` and `posted` as
+`"3 hours ago"`, because parsing those belongs in one tested place — `app/services/capture.py` in the
+backend — rather than duplicated in JavaScript:
+
+```json
+{
+  "freelance_platform": "upwork",
+  "page_key": "best_matches",
+  "page_label": "Best matches",
+  "reads": "jobs",
+  "page_url": "https://www.upwork.com/nx/find-work/best-matches",
+  "scraped_at": "2026-07-30T12:00:00.000Z",
+  "is_llm_required": false,
+  "items": [ /* readJobCards() output, verbatim */ ],
+  "page_text": ""
+}
+```
+
+`scraped_at` is the **reader's** clock, not the sender's: relative ages are resolved against it, so a
+push that waited doesn't shift every posted date. A field the selectors didn't find travels as
+`null`, never as zero or an omission — the backend treats null as "unknown" and a partial scrape can
+never blank a value an earlier, better one found.
+
+`is_llm_required` is the extension asking for an LLM reading of `page_text`; it's a request, not an
+instruction. The backend still skips the call when nothing is actually missing, and the response says
+whether it ran. Two rules bound it:
+
+- **It only fills what the selectors left empty.** A model asked to read a page it can mostly see
+  will restate a title slightly differently; letting that win would make the same job's title flicker
+  between collections.
+- **It cannot introduce a job.** Readings are matched back by **title**, because a job's id lives in
+  its link's `href` and the model only ever sees visible text. An item no scraped row matches is
+  dropped and counted — with no id there'd be nothing to dedupe the next collection against, so it
+  would arrive as a new orphan project every single time.
+
+The response is counts, not a tick, and the checklist shows them per page:
+
+```json
+{"received": 24, "stored": 22, "created": 19, "duplicates": 1, "skipped_no_id": 1,
+ "llm_used": true, "llm_model": "gemini-2.5-flash", "llm_fields_filled": 14, "llm_unmatched": 0}
+```
+
+Twelve links found and none stored is a broken selector, and "sent ✓" is precisely the wrong thing to
+say about it. Filing is also reported separately from reading throughout: a page can be read
+perfectly and still fail to file — an expired token, a backend that isn't running — and one shared
+status would send you to debug the wrong half.
+
+Ticking **Also open each job for its full description** re-files the pages afterwards, once the whole
+brief is in hand. The upsert is on `(platform, external_id)`, so that updates the rows already stored
+rather than making twins of them.
+
+### Pages with no modelled home
+
+`contracts`, `pph_proposals`, orders and message rooms don't map onto a table yet — a proposal needs a
+resolved project FK, a contract needs a table of its own — but those rows only exist while you happen
+to be on the page. Deferring the decision *and* discarding the data would mean a month of history
+thrown away, so they're **accumulated whole** in `page_captures`: the reader's rows verbatim, plus the
+visible text they're a partial reading of. v2 extracts whatever shape it settles on, over history
+rather than from scratch.
+
+An unchanged re-collection bumps `times_seen` instead of filing another copy; a changed page is a new
+row, because that difference is the value of keeping them. The checklist says `6 kept` for these, not
+`6 stored` — they're queryable, but nothing reads them yet.
+
+With the AI toggle on, those pages also get an LLM reading stored **beside** the raw rows, never
+instead of them — a model's interpretation isn't evidence, and a later, better prompt should get to
+re-read the original. Message rooms are the deliberate exception: they're two-party data, half of it
+belonging to someone who never agreed to any of this, so they accumulate but are never sent to a
+model.
+
 ## Tests
 
 ```bash
@@ -218,7 +352,14 @@ profile page:  name · tagline · rate · country · city · availability · lan
                · portfolio (+absolute URLs) · work history · employment · education · certs
 empty page:    budget absent not zero · proposals absent not zero · skills empty list
                · client block all-null not zeroes
+payload:       the nine named parameters · platform travels · items come from `reads`
+               · scraped_at is the reader's clock · no page text unless the AI is wanted
+               · rows pages send rows · summaries read as counts
 ```
+
+The backend half of the contract is tested there: `pytest tests/test_capture.py` in
+`AutoLancers-backend` covers the money/relative-time parsing, the dedupe, and the rule that an LLM
+reading can only fill a gap.
 
 Fixtures are a copy of the *shape* of Upwork's markup, not a guarantee it still matches. Passing
 tests plus red "not found" rows on a real page means the fixtures need updating.

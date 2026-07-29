@@ -1,0 +1,31 @@
+<!doctype html><html><head><title>Avinash K. - AI, Backend &amp; Platform Engineer - Upwork Freelancer from Chennai, India</title></head><body>
+<!--
+  A profile page with the site's own account menu present — which is how "is this profile mine?" is
+  answered. No URL pattern can tell your Upwork profile from anyone else's, but the marketplace links
+  only *your* profile from its header, so the id there is the identity to compare against.
+
+  The header below links ~019abcdef123456789, and the test loads this fixture as that same id, so it
+  reads as your own. Load it as a different id and `is_own` must go false — that is the case that used
+  to overwrite your profile row with a stranger's.
+-->
+<header>
+  <nav>
+    <a href="/nx/find-work/best-matches">Find work</a>
+    <div data-test="user-menu">
+      <a href="/freelancers/~019abcdef123456789">Your profile</a>
+      <a href="/freelancers/settings/contactInfo">Account settings</a>
+    </div>
+  </nav>
+</header>
+
+<main>
+  <h1 itemprop="name">Avinash K.</h1>
+  <h2>AI, Backend &amp; Platform Engineer</h2>
+  <h3 itemprop="priceRange">$20.00/hr</h3>
+  <div itemprop="country-name">India</div>
+  <section>
+    <h4>Skills</h4>
+    <span class="air3-token">Python</span><span class="air3-token">FastAPI</span>
+  </section>
+</main>
+</body></html>

@@ -35,6 +35,16 @@ async function read(fixture, fn) {
       : "https://www.upwork.com/freelancers/~019abcdef123456789"]);
 }
 
+/** Any reader, on any fixture, at any URL — for the cases that turn on which URL you are at. */
+async function readFrom(fixture, href, call, ...args) {
+  await page.goto(pathToFileURL(new URL(`fixtures/${fixture}`, import.meta.url).pathname).href);
+  return page.evaluate(([code, url, fn, callArgs]) => {
+    Object.defineProperty(window, "__href", { value: url, configurable: true });
+    eval(code);
+    return globalThis.ALExtract[fn](...callArgs);
+  }, [src.replace(/location\.href/g, "window.__href"), href, call, args]);
+}
+
 console.log("job page:");
 const job = await read("job.html", "readJob");
 check("external_id from URL", job.external_id, "~021999888777666555");
@@ -183,6 +193,174 @@ check("budget absent, not zero", [bare.budget_min, bare.budget_max], [null, null
 check("proposals absent, not zero", bare.proposal_count, null);
 check("skills empty list", bare.skills, []);
 check("client block all-null, not zeroes", [bare.client.rating, bare.client.total_spent], [null, null]);
+
+// --- signed out ------------------------------------------------------------------------
+//
+// The failure with no symptom. A login page loads perfectly, so the tab reaches `complete` and
+// nothing throws — but it holds no job links, so the reader would return an empty list and the run
+// would report "0 found" on all eight pages. That reads exactly like a quiet day on the marketplace,
+// and files "stored 0" to the backend as though it were true.
+console.log("\nsigned out (a login page must never read as an empty result):");
+
+const loggedOutList = await readFrom(
+  "login.html",
+  "https://www.upwork.com/ab/account-security/login",
+  "readList",
+  "best_matches"
+);
+check("status says signed_out, not ok", loggedOutList.status, "signed_out");
+check("it carries an error rather than a count of zero", Boolean(loggedOutList.error), true);
+check("no jobs invented", loggedOutList.jobs, undefined);
+
+// Detected by URL *and* by content, because a marketplace can render a login wall in place without
+// changing the URL. Here the URL is a find-work page and only the password field gives it away.
+const wallInPlace = await readFrom(
+  "login.html",
+  "https://www.upwork.com/nx/find-work/best-matches",
+  "readList",
+  "best_matches"
+);
+check("a login wall on a find-work URL is still caught", wallInPlace.status, "signed_out");
+
+check(
+  "whichPage answers signed_out before it answers a page type",
+  await readFrom("login.html", "https://www.upwork.com/ab/account-security/login", "whichPage"),
+  "signed_out"
+);
+check(
+  "a real listing page is ok",
+  (await readFrom("listing.html", "https://www.upwork.com/nx/find-work/best-matches", "sessionState")).status,
+  "ok"
+);
+
+// --- whose profile is this? ------------------------------------------------------------
+//
+// No URL pattern can tell your Upwork profile from anyone else's — `/freelancers/~01…` matches every
+// freelancer on the site. But the marketplace links only *yours* from its own account menu, so the id
+// there is the identity to compare against. Before this, sending a competitor's profile overwrote
+// your own name, rate and skills with theirs.
+console.log("\nwhose profile is this (the account menu is the only thing that knows):");
+
+const mine = await readFrom(
+  "own-profile.html",
+  "https://www.upwork.com/freelancers/~019abcdef123456789",
+  "findOwnProfile"
+);
+check("found from the site's own account menu", mine.id, "~019abcdef123456789");
+check("no configuration needed to know it", mine.status, "ok");
+
+check(
+  "my own profile reads as mine",
+  await readFrom("own-profile.html", "https://www.upwork.com/freelancers/~019abcdef123456789", "isOwnProfile"),
+  true
+);
+check(
+  "someone else's profile does not",
+  await readFrom("own-profile.html", "https://www.upwork.com/freelancers/~01ffffffffffffffff", "isOwnProfile"),
+  false
+);
+// Undecidable, not "probably yours". The backend refuses a null exactly as it refuses a false.
+check(
+  "no account menu means no answer, not a guess",
+  await readFrom("profile.html", "https://www.upwork.com/freelancers/~019abcdef123456789", "isOwnProfile"),
+  null
+);
+check(
+  "readProfile carries the verdict",
+  (await readFrom("own-profile.html", "https://www.upwork.com/freelancers/~019abcdef123456789", "readProfile")).is_own,
+  true
+);
+
+// Fiverr's own pages are shaped exactly like a username, so telling them apart takes a list. A page
+// misread as a profile gets scraped as one and then written into your profile row.
+console.log("\nFiverr page types (a username and a section are the same shape):");
+const fiverr = await page.evaluate((code) => {
+  Object.defineProperty(window, "__href", { value: "https://www.fiverr.com/", configurable: true });
+  eval(code);
+  const p = globalThis.ALPlatforms.PLATFORMS.fiverr;
+  return {
+    seller: p.isProfilePage("https://www.fiverr.com/some.seller_1"),
+    query: p.isProfilePage("https://www.fiverr.com/my-username?ref=x"),
+    inbox: p.isProfilePage("https://www.fiverr.com/inbox"),
+    orders: p.isProfilePage("https://www.fiverr.com/orders"),
+    settings: p.isProfilePage("https://www.fiverr.com/settings"),
+    gig: p.isProfilePage("https://www.fiverr.com/gigs/abc"),
+  };
+}, src.replace(/location\.href/g, "window.__href"));
+check("a seller username is a profile", [fiverr.seller, fiverr.query], [true, true]);
+check("/inbox, /orders and /settings are not", [fiverr.inbox, fiverr.orders, fiverr.settings], [false, false, false]);
+check("nor is a gig", fiverr.gig, false);
+
+// --- what gets sent to the backend ----------------------------------------------------
+//
+// The payload is the contract between the two halves, so it is pinned here rather than left to be
+// discovered when a rename makes the backend reject every page with a 422.
+console.log("\ncollection payload (the extension↔backend contract):");
+const { collectionPayload, describePush } = await import("../src/background/api.js");
+
+const jobsPage = { key: "best_matches", label: "Best matches", reads: "jobs", url: "https://x/" };
+const readAt = "2026-07-30T12:00:00.000Z";
+const scraped = { platform: "upwork", url: "https://www.upwork.com/nx/find-work/best-matches", at: readAt, count: 2, jobs: listing.jobs, text: "page text" };
+
+const sent = collectionPayload({ platform: "upwork", page: jobsPage, result: scraped, useLlm: false });
+check("named parameters the backend validates on", Object.keys(sent).sort(), [
+  "freelance_platform", "is_llm_required", "items", "page_key", "page_label", "page_status",
+  "page_text", "page_url", "reads", "scraped_at", "status_detail",
+]);
+check("platform travels with the payload", sent.freelance_platform, "upwork");
+check("items come from the reader named by `reads`", sent.items.length, 2);
+// Relative ages are resolved against this on the backend, so it must be the reader's own clock —
+// not the moment the push happened, which can be a minute later after a retry.
+check("scraped_at is the reader's timestamp", sent.scraped_at, readAt);
+// 60KB of page text the backend will not read is 60KB nobody needs to send.
+check("no page text unless the AI is wanted", sent.page_text, "");
+check("no AI asked for by default", sent.is_llm_required, false);
+
+const withAi = collectionPayload({ platform: "upwork", page: jobsPage, result: scraped, useLlm: true });
+check("AI requested carries the text", [withAi.is_llm_required, withAi.page_text], [true, "page text"]);
+
+// A rows page (contracts, proposals, orders) sends its rows, not an empty jobs array.
+const rowsPage = { key: "contracts", label: "Contracts", reads: "rows", url: "https://x/" };
+const rowsResult = { platform: "upwork", at: readAt, count: 1, rows: [{ title: "A contract", url: "https://x/1" }], text: "the whole page" };
+const rowsSent = collectionPayload({ platform: "upwork", page: rowsPage, result: rowsResult });
+check("rows pages send rows", rowsSent.items.length, 1);
+// These have no modelled table, so they are accumulated whole for v2 — and the rows are only a
+// partial reading of the text, so the text goes too, whether or not the AI was asked for.
+check("rows pages always carry their text", rowsSent.page_text, "the whole page");
+
+// The whole point of reporting counts rather than a tick: twelve found and none stored is a broken
+// selector, and a tick would call that a success.
+check(
+  "push summary reads as counts",
+  describePush({ stored: 12, created: 9, duplicates: 3, llm_used: false }),
+  "12 stored · 9 new · 3 dup"
+);
+check("a failed push says so", describePush({ error: "Token rejected" }), "Token rejected");
+// "kept", not "stored": the rows are in the database and queryable, but nothing reads them yet.
+check(
+  "an accumulated page says kept",
+  describePush({ stored: 6, capture_id: "abc", llm_used: true, llm_fields_filled: 6 }),
+  "6 kept · AI read 6"
+);
+
+// A wall reports its status and nothing else: a login page's text is not your contracts, and
+// accumulating it would file junk under a page key that is supposed to mean something.
+const wallSent = collectionPayload({
+  platform: "upwork",
+  page: rowsPage,
+  result: {
+    platform: "upwork",
+    at: readAt,
+    status: "signed_out",
+    count: 0,
+    error: "Not signed in to Upwork — redirected to the login page.",
+    text: "Log in to Upwork",
+  },
+  useLlm: true,
+});
+check("a wall sends its status", wallSent.page_status, "signed_out");
+check("with the reader's own words", wallSent.status_detail.startsWith("Not signed in"), true);
+check("and no page text, even with the AI on", wallSent.page_text, "");
 
 await browser.close();
 console.log(failures ? `\n${failures} failing` : "\nall checks passed");

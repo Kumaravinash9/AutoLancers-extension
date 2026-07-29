@@ -83,6 +83,25 @@
           tripped Upwork's bot detection in practice — the browser was challenged for a while,
           though the account itself stayed fine.
         </p>
+        <p class="hint">
+          <label>
+            <input id="pushToBackend" type="checkbox" />
+            Send each collected page to AutoLancers as it finishes
+          </label>
+          — every job listing becomes a project, deduped on its marketplace id, so the same posting
+          seen on Best matches and Most recent is one row scored once. Needs a token; with none set
+          nothing is sent and nothing fails.
+        </p>
+        <p class="hint">
+          <label>
+            <input id="useLlm" type="checkbox" />
+            Let the AI fill fields the selectors missed
+          </label>
+          — costs tokens and seconds per page, and only runs when a field actually came back empty.
+          It can never overwrite a value the selectors found, and it can never introduce a job that
+          wasn't on the page: a job's id lives in its link, and a job with no id could not be
+          deduped against the next collection.
+        </p>
       </div>
 
       <div class="row">

@@ -140,10 +140,17 @@ function meta(...names) {
   return null;
 }
 
+/**
+ * A href as an absolute URL.
+ *
+ * Resolved against the current page rather than against the origin. Almost every link here is
+ * root-relative (`/jobs/~021…`) and the two agree on those, but a genuinely relative href —
+ * `settings/contactInfo` next to `/freelancers/` — resolves to the wrong path against a bare origin.
+ */
 function absolute(url) {
   if (!url) return null;
   try {
-    return new URL(url, location.origin).href;
+    return new URL(url, location.href).href;
   } catch {
     return null;
   }
@@ -374,6 +381,11 @@ function readProfile() {
     return { error: "Open a freelancer profile page first." };
   }
 
+  const session = sessionState();
+  if (session.status !== "ok") {
+    return { status: session.status, error: `Not signed in — ${session.why}.` };
+  }
+
   const titled = fromTitle();
 
   // "$20.00/hr" is its own heading with nothing else identifying it, so match the shape.
@@ -390,6 +402,17 @@ function readProfile() {
     platform: currentPlatform()?.id || "unknown",
     username,
     url,
+    status: "ok",
+
+    /**
+     * Whether this is the signed-in user's own profile, by account id rather than by name.
+     *
+     * The backend mirrors a captured profile onto *your* `freelancer_profiles` row, so a stranger's
+     * profile sent here overwrites your name, rate, tagline and skills with theirs. `null` means
+     * undecidable — no header link to compare against — and the backend treats that as "not proven
+     * mine" and refuses, rather than picking the convenient answer.
+     */
+    is_own: isOwnProfile(),
 
     // Identity — itemprop survived every redesign so far; the title is the backstop.
     display_name: firstOf(['[itemprop="name"]']) || titled.name,
@@ -746,7 +769,55 @@ function afterRouteChange(previousUrl, timeoutMs = 15000) {
   });
 }
 
-/** One entry point the collector calls with the page key it navigated to. */
+/**
+ * Whether this page is the thing we asked for, or a wall standing in front of it.
+ *
+ * The failure this exists to prevent: signed out of Upwork, every find-work URL redirects to the
+ * login page. That page loads fine, so the tab reaches `complete`, and the job reader finds no
+ * `/jobs/~id` links on it and returns an empty list. The run then reports **"0 found" on all eight
+ * pages** — which reads exactly like a quiet day on the marketplace, and files "stored 0" to the
+ * backend as though that were true. An empty list from a login page is not a small inaccuracy; it is
+ * worse than an error, because nothing downstream can tell it from the truth.
+ *
+ * Three states, because they need different things from you:
+ *
+ *   `signed_out` — sign in, then collect again.
+ *   `blocked`    — a challenge or a rate limit. Stop: more pages makes it worse, and this is the bot
+ *                  detection whose signature is documented in `src/background/worker.js`.
+ *   `ok`         — read it.
+ *
+ * The URL is checked first because a redirect is unambiguous, then the page's own content — a
+ * marketplace can render a login wall in place without changing the URL, so both halves are needed.
+ */
+function sessionState() {
+  const platform = currentPlatform();
+  const text = (document.body?.innerText || "").slice(0, 4000);
+
+  if (platform?.isLoginPage?.(location.href)) {
+    return { status: "signed_out", why: "redirected to the login page" };
+  }
+
+  // A password field is as close to proof as this gets: no signed-in marketplace page has one
+  // outside of settings, and the collector never visits settings.
+  const asksForPassword = Boolean(document.querySelector('input[type="password"]'));
+  const invitesSignIn = /\b(log ?in|sign ?in|welcome back)\b/i.test(text.slice(0, 1200));
+  if (asksForPassword && invitesSignIn) {
+    return { status: "signed_out", why: "the page is asking you to sign in" };
+  }
+
+  // Upwork's challenge page. The wording is theirs — it is what appeared when eight pages were read
+  // at once, and recognising it is what lets the run stop instead of hammering through the rest.
+  if (
+    /there was an error loading this page|please contact customer support/i.test(text) ||
+    /access denied|unusual (?:traffic|activity)|are you a (?:human|robot)|verify you are human/i.test(text) ||
+    /^just a moment/i.test(document.title)
+  ) {
+    return { status: "blocked", why: "served a challenge page instead" };
+  }
+
+  return { status: "ok", why: null };
+}
+
 /**
  * One entry point the collector calls with the page key it navigated to.
  *
@@ -762,7 +833,22 @@ function readList(key) {
     url: location.href.split("?")[0],
     title: document.title,
     at: new Date().toISOString(),
+    status: "ok",
   };
+
+  // Checked before any reader runs, so a wall can never be mistaken for an empty result.
+  const session = sessionState();
+  if (session.status !== "ok") {
+    return {
+      ...base,
+      status: session.status,
+      count: 0,
+      error:
+        session.status === "signed_out"
+          ? `Not signed in to ${platform?.label || "this site"} — ${session.why}.`
+          : `${platform?.label || "This site"} ${session.why}.`,
+    };
+  }
 
   switch (page?.reads) {
     case "jobs": {
@@ -789,10 +875,73 @@ function readList(key) {
   }
 }
 
+/**
+ * The signed-in user's own profile URL, taken from the site's own navigation.
+ *
+ * "Which profile is mine?" has no stable answer from a URL pattern — `upwork.com/freelancers/~01…`
+ * matches everybody's. But the marketplace itself knows, and it puts a link to *your* profile in its
+ * own header: that is what the avatar menu opens. Following the site's own link is the same trick the
+ * rest of this file uses for fields, and it needs nothing configured.
+ *
+ * Returns `null` rather than guessing when the header has no such link — signed out, or a redesign.
+ * A guess here is the expensive kind of wrong: the profile it names gets written into your own
+ * profile row.
+ */
+function findOwnProfile() {
+  const platform = currentPlatform();
+  if (!platform?.ownProfileLink) return null;
+
+  const session = sessionState();
+  if (session.status !== "ok") return { status: session.status, url: null, id: null };
+
+  // Header and account menus only. A profile link inside a job card or a review is *someone else's*,
+  // and that is the whole distinction being drawn here.
+  const scopes = [
+    "header",
+    "[data-test*='user-menu']",
+    "[class*='user-menu']",
+    "[class*='account-menu']",
+    "[aria-label*='account' i]",
+    "nav",
+  ];
+
+  for (const scope of scopes) {
+    for (const container of document.querySelectorAll(scope)) {
+      for (const anchor of container.querySelectorAll(platform.ownProfileLink)) {
+        const url = absolute(anchor.getAttribute("href"));
+        if (!url || !platform.isProfilePage(url)) continue;
+        return { status: "ok", url: url.split("?")[0], id: platform.profileId?.(url) || null };
+      }
+    }
+  }
+  return { status: "not_found", url: null, id: null };
+}
+
+/**
+ * Is the profile page we are on the signed-in user's own?
+ *
+ * Compared by the account id in the URL against the id the header links to. Not by name, and not by
+ * the presence of an "Edit profile" button — both move; the id does not.
+ *
+ * `null` means undecidable (no header link to compare against), which the caller must treat as "not
+ * proven mine" rather than as either answer.
+ */
+function isOwnProfile() {
+  const platform = currentPlatform();
+  const mine = findOwnProfile();
+  if (!mine || mine.status !== "ok" || !mine.id) return null;
+  const here = platform?.profileId?.(location.href);
+  return here ? here === mine.id : null;
+}
+
 /** Which of the readers applies here, decided by the platform rather than by the popup. */
 function whichPage() {
   const platform = currentPlatform();
   if (!platform) return null;
+  // Reported before the page type, because "you are signed out" is the useful answer and "this is
+  // not a page I read" is a misleading one — the login page genuinely isn't, but that isn't why.
+  const session = sessionState();
+  if (session.status !== "ok") return session.status;
   if (platform.isProfilePage(location.href)) return "profile";
   if (platform.isJobPage(location.href)) return "job";
   return "other";
@@ -802,6 +951,6 @@ function whichPage() {
   // link shapes and the tracking parameter bite, so it is worth pinning directly.
   return {
     readJob, readProfile, diagnose, readText, readList, clickTo, afterRouteChange, whichPage,
-    idFromUrl, canonicalJobUrl,
+    idFromUrl, canonicalJobUrl, sessionState, findOwnProfile, isOwnProfile,
   };
 })();

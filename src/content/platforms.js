@@ -18,6 +18,22 @@
  * appeared to work. Guarding on the namespace makes re-injection a no-op.
  */
 globalThis.ALPlatforms ||= (() => {
+
+/**
+ * Fiverr's own top-level paths, which are shaped exactly like a username.
+ *
+ * `fiverr.com/inbox` and `fiverr.com/my-username` are indistinguishable by pattern, so telling them
+ * apart takes a list. Erring towards "not a profile" is the safe direction: a profile page missed is
+ * a button that doesn't appear, while a settings page mistaken for a profile is a scrape of the wrong
+ * thing written into your profile row.
+ */
+const FIVERR_RESERVED = new Set([
+  "inbox", "orders", "briefs", "gigs", "gig", "categories", "settings", "users", "start_selling",
+  "login", "join", "signin", "logout", "dashboard", "notifications", "search", "support", "help",
+  "cp", "seller_dashboard", "selling", "buying", "invoices", "earnings", "analytics", "pro",
+  "business", "studios", "logo-maker", "share", "terms_of_service", "privacy_policy", "about",
+]);
+
 const PLATFORMS = {
   upwork: {
     id: "upwork",
@@ -31,6 +47,17 @@ const PLATFORMS = {
     isProfilePage: (url) => /upwork\.com\/freelancers\/~[0-9a-zA-Z]{10,}/.test(url),
     profileExample: "upwork.com/freelancers/~0abc…",
     jobExample: "upwork.com/jobs/~021abc…",
+
+    // Where a signed-out request lands. Upwork redirects any find-work URL here, so the reader must
+    // recognise it: without this a logged-out run reports "0 jobs found" on every page, which is
+    // indistinguishable from a quiet day on the marketplace.
+    isLoginPage: (url) =>
+      /upwork\.com\/(?:ab\/account-security\/login|nx\/signup|ab\/account-security\/sso)/.test(url),
+    // Your own profile is whatever the site's own header links to. Only you get that link, so
+    // following it is how "my profile" is answered without asking you to paste a URL.
+    ownProfileLink: 'a[href*="/freelancers/~"]',
+    // The id in the URL is the account identity; two profiles are the same person iff these match.
+    profileId: (url) => (url.match(/~[0-9a-zA-Z]{10,}/) || [null])[0],
 
     pages: [
       { key: "best_matches", label: "Best matches", link: "/nx/find-work/best-matches", url: "https://www.upwork.com/nx/find-work/best-matches", reads: "jobs" },
@@ -57,6 +84,10 @@ const PLATFORMS = {
     profileExample: "peopleperhour.com/freelancer/…",
     jobExample: "peopleperhour.com/freelance-jobs/…-4123456",
 
+    isLoginPage: (url) => /peopleperhour\.com\/(?:session\/new|login|signin|register)/.test(url),
+    ownProfileLink: 'a[href*="/freelancer/"]',
+    profileId: (url) => (url.match(/\/freelancer\/([^/?#]+)/) || [null, null])[1],
+
     pages: [
       { key: "pph_feed", label: "Job feed", link: "/freelance-jobs", url: "https://www.peopleperhour.com/freelance-jobs", reads: "jobs" },
       { key: "pph_saved", label: "Saved jobs", link: "/site/saved-jobs", url: "https://www.peopleperhour.com/site/saved-jobs", reads: "jobs" },
@@ -77,9 +108,27 @@ const PLATFORMS = {
     jobId: (url) => (url.match(/\/(?:gigs?|briefs?)\/([A-Za-z0-9_-]{6,})/) || [null, null])[1],
     jobLink: 'a[href*="/gigs/"], a[href*="/briefs/"]',
     isJobPage: (url) => /fiverr\.com\/(?:gigs?|briefs?)\//.test(url),
-    isProfilePage: (url) => /fiverr\.com\/(?!gigs?\/|briefs?\/|categories\/)[A-Za-z0-9_.-]+\/?$/.test(url),
+
+    /**
+     * A Fiverr seller profile is `fiverr.com/<username>` — the same shape as most of the site's own
+     * pages, which is why this needs a reserved list rather than a lookahead for three of them.
+     *
+     * The earlier pattern excluded only gigs, briefs and categories, so `/inbox`, `/orders`,
+     * `/settings` and `/users` all read as "a profile". That mattered: a page misread as a profile
+     * gets scraped as one and then written into *your* profile row.
+     */
+    isProfilePage: (url) => {
+      const match = url.match(/^https?:\/\/(?:www\.)?fiverr\.com\/([A-Za-z0-9_.-]+)\/?(?:[?#]|$)/);
+      return Boolean(match) && !FIVERR_RESERVED.has(match[1].toLowerCase());
+    },
     profileExample: "fiverr.com/your-username",
     jobExample: "fiverr.com/briefs/…",
+
+    isLoginPage: (url) => /fiverr\.com\/(?:login|join|signin)/.test(url),
+    // Fiverr's header links your own profile as `/<username>`; `/users/<username>/…` also carries it.
+    ownProfileLink: 'a[href*="/users/"], header a[href^="/"]',
+    profileId: (url) =>
+      (url.match(/fiverr\.com\/(?:users\/)?([A-Za-z0-9_.-]+)/) || [null, null])[1],
 
     pages: [
       { key: "fvr_gigs", label: "My gigs", link: "/users", url: "https://www.fiverr.com/users/_/manage_gigs", reads: "rows" },

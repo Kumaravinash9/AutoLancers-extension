@@ -25,6 +25,8 @@
  * and "a bot that watches the site", and it is the wrong side of it.
  */
 
+import { PUSH_DEFAULTS, connection, pushPage } from "./api.js";
+
 const STATE_KEY = "collect.state";
 const SETTINGS_KEY = "collect.settings";
 
@@ -167,6 +169,78 @@ async function setState(patch) {
 }
 
 /**
+ * File one finished page with the backend.
+ *
+ * As each page completes rather than in one batch at the end: a run that is cancelled or that loses
+ * its last page keeps everything it already read. The whole run is one request per page either way.
+ *
+ * Never throws. A backend that is down, or a token that has expired, must cost the filing and not
+ * the collection — the scraped rows are still sitting in `results` and still copyable. The failure is
+ * recorded against the page so the checklist can say so, rather than showing a tick that means
+ * "read" while the user reads it as "stored".
+ */
+/**
+ * A page that turned out to be a wall, not a page.
+ *
+ * Signed out, every find-work URL redirects to the login page — which loads fine, so the reader finds
+ * no jobs on it and would otherwise report a truthful-looking zero. Two things follow from detecting
+ * it, and the second matters more:
+ *
+ *   1. The run stops. There is nothing behind the wall, so the remaining seven pages are seven
+ *      pointless requests — and if the status is `blocked`, they are seven requests to a site that
+ *      has just told us it is unhappy, which is the worst possible response to bot detection.
+ *   2. The backend is told. The frontend is open in the same browser, so "your Upwork session
+ *      expired" belongs there, next to the board full of jobs that is about to go stale.
+ */
+function sessionProblem(result) {
+  const status = result?.status;
+  return status === "signed_out" || status === "blocked" ? status : null;
+}
+
+/** Stop the run and say why, in words that name the fix rather than the symptom. */
+async function haltForSession(status, detail, done, total) {
+  await setState({
+    cancelled: true,
+    running: false,
+    session: { status, detail, at: Date.now() },
+    current: null,
+    note:
+      status === "signed_out"
+        ? `Stopped after ${done} of ${total} pages — you are signed out. Sign in and collect again.`
+        : `Stopped after ${done} of ${total} pages — the site served a challenge. Leave it a while ` +
+          `before trying again, and read one page at a time.`,
+  });
+  await badge("!", "#a3372c");
+}
+
+async function filePage(page, result, platformId, pushes) {
+  const { pushToBackend, useLlm } = await autoSettings();
+  if (!pushToBackend || !result) return;
+
+  // A session problem is reported *because* there is nothing to store — it is the one failure the
+  // backend needs to hear about, since it is the one the user can fix.
+  const problem = sessionProblem(result);
+  if (!problem && result.error) return;
+
+  // Nothing to send anywhere. Not a failure worth reporting: the extension is meant to be useful
+  // with no backend at all.
+  const { token } = await connection();
+  if (!token) return;
+
+  try {
+    pushes[page.key] = await pushPage({
+      platform: result.platform || platformId,
+      page,
+      result,
+      useLlm,
+    });
+  } catch (err) {
+    pushes[page.key] = { error: String(err?.message || err) };
+  }
+  await setState({ pushes });
+}
+
+/**
  * Wait until a tab has actually loaded, rather than guessing with a fixed sleep.
  *
  * A sleep is wrong in both directions: too short and the reader runs against an empty DOM and
@@ -266,7 +340,7 @@ async function readOnePage(page, reuseTabId = null) {
  * Falls back to a real navigation, in the same tab, whenever the link is not on the current page —
  * there is no path from "Contracts" to "Saved jobs" if the nav does not offer one.
  */
-async function readByClicking(pages, tabId, results, errors, onDone) {
+async function readByClicking(pages, tabId, results, errors, pushes, platformId, onDone) {
   for (const [index, page] of pages.entries()) {
     const { [STATE_KEY]: state = {} } = await chrome.storage.local.get(STATE_KEY);
     if (state.cancelled) return;
@@ -292,6 +366,14 @@ async function readByClicking(pages, tabId, results, errors, onDone) {
       }
 
       results[page.key] = await readInTab(tabId, (key) => globalThis.ALExtract.readList(key), [page.key]);
+      await filePage(page, results[page.key], platformId, pushes);
+
+      const problem = sessionProblem(results[page.key]);
+      if (problem) {
+        errors[page.key] = results[page.key].error;
+        await haltForSession(problem, results[page.key].error, index + 1, pages.length);
+        return;
+      }
     } catch (err) {
       errors[page.key] = String(err?.message || err);
     }
@@ -313,12 +395,20 @@ async function run(selectedKeys, platformId = null) {
     total: pages.length,
     results: {},
     errors: {},
+    pushes: {},
+    // Cleared per run: a sign-in problem from an hour ago must not describe this one.
+    session: null,
+    note: null,
     startedAt: Date.now(),
   });
   await badge("0/" + pages.length);
 
   const results = {};
   const errors = {};
+  // What the backend made of each page, kept separate from `errors`: a page can be read perfectly
+  // and still fail to file, and collapsing the two would make a backend that is merely switched off
+  // look like a broken scraper.
+  const pushes = {};
   let finished = 0;
 
   const { concurrency = DEFAULT_CONCURRENCY, navigateByClicking = true } = await autoSettings();
@@ -330,11 +420,11 @@ async function run(selectedKeys, platformId = null) {
       ? await chrome.tabs.query({ url: `https://*.${platform.id === "peopleperhour" ? "peopleperhour" : platform.id}.com/*` })
       : [];
     if (openTab) {
-      await readByClicking(pages, openTab.id, results, errors, async (done) => {
+      await readByClicking(pages, openTab.id, results, errors, pushes, platform.id, async (done) => {
         await setState({ done, results, errors });
         await badge(`${done}/${pages.length}`);
       });
-      await finish(results, errors);
+      await finish(results, errors, pushes, platform.id, pages);
       return;
     }
     await setState({ note: "No tab open on that site — opened one instead of clicking through." });
@@ -364,8 +454,12 @@ async function run(selectedKeys, platformId = null) {
       if (!page) return;
 
       await setState({ current: page.label });
+      let problem = null;
       try {
         results[page.key] = await readOnePage(page, sharedTabId);
+        await filePage(page, results[page.key], platformId, pushes);
+        problem = sessionProblem(results[page.key]);
+        if (problem) errors[page.key] = results[page.key].error;
       } catch (err) {
         // One unreachable page must not end the run — the rest are still worth having.
         errors[page.key] = String(err?.message || err);
@@ -374,6 +468,14 @@ async function run(selectedKeys, platformId = null) {
       finished += 1;
       await setState({ done: finished, results, errors });
       await badge(`${finished}/${pages.length}`);
+
+      // A wall in front of one page is a wall in front of all of them. Emptying the queue stops the
+      // other lanes too — they check `cancelled` at the top of each turn.
+      if (problem) {
+        queue.length = 0;
+        await haltForSession(problem, results[page.key].error, finished, pages.length);
+        return;
+      }
 
       // Only meaningful when a lane has more work waiting. Running fully in parallel each lane
       // takes one page and the queue is empty, so no pause happens at all.
@@ -384,11 +486,11 @@ async function run(selectedKeys, platformId = null) {
   await Promise.all(Array.from({ length: lanes }, () => lane()));
   if (sharedTabId !== null) await chrome.tabs.remove(sharedTabId).catch(() => {});
 
-  await finish(results, errors);
+  await finish(results, errors, pushes, platformId, pages);
 }
 
 /** Optional per-job description pass, then mark the run complete. */
-async function finish(results, errors) {
+async function finish(results, errors, pushes = {}, platformId = null, pages = []) {
   const { fullDescriptions = false, concurrency = DEFAULT_CONCURRENCY } = await autoSettings();
   const lanes = Number(concurrency) || 1;
   if (fullDescriptions) {
@@ -400,6 +502,18 @@ async function finish(results, errors) {
         await badge(`${done}/${total}`);
       });
       await setState({ descSummary: summary });
+
+      // The pages were filed with the listing's truncated preview. Now that the whole brief is in
+      // hand, send them again — the upsert is on (platform, external_id), so this updates the rows
+      // already stored rather than making twins of them.
+      if (summary.deepened) {
+        await setState({ current: "Filing full descriptions", phase: "refiling" });
+        for (const page of pages) {
+          if ((results[page.key]?.jobs || []).length) {
+            await filePage(page, results[page.key], platformId, pushes);
+          }
+        }
+      }
     }
   }
 
@@ -410,6 +524,7 @@ async function finish(results, errors) {
     finishedAt: Date.now(),
     results,
     errors,
+    pushes,
   });
   const failed = Object.keys(errors).length;
   await badge(failed ? String(failed) : "", failed ? "#a3372c" : "#14563f");
@@ -522,6 +637,7 @@ async function autoSettings() {
     concurrency: DEFAULT_CONCURRENCY,
     fullDescriptions: false,
     keys: DEFAULT_KEYS,
+    ...PUSH_DEFAULTS,
     ...stored,
   };
 }
