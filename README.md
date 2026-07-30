@@ -403,3 +403,18 @@ reading can only fill a gap.
 
 Fixtures are a copy of the *shape* of Upwork's markup, not a guarantee it still matches. Passing
 tests plus red "not found" rows on a real page means the fixtures need updating.
+
+`npm test` then loads the extension into a real Chromium (`test/load.mjs`) and checks that it comes up
+at all — a malformed manifest, a service worker that throws on its first tick, and an unresolvable
+import all present identically, as an extension that is simply dead with the reason buried in
+`chrome://extensions`. It also asks **Chrome** whether each host may be read and compares that against
+what the code claims to support, which is the only way to catch the two disagreeing:
+
+```
+host                      chrome allows   code claims
+www.upwork.com            true            true
+upwork.com                true            true
+community.upwork.com      false           false
+```
+
+Run them separately with `npm run test:readers` and `npm run test:load`.

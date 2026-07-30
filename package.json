@@ -4,7 +4,9 @@
   "private": true,
   "description": "Chrome extension that reads the Upwork page you have open.",
   "scripts": {
-    "test": "node test/run.mjs"
+    "test": "node test/run.mjs && node test/load.mjs",
+    "test:readers": "node test/run.mjs",
+    "test:load": "node test/load.mjs"
   },
   "devDependencies": {
     "playwright": "^1.49.0"
