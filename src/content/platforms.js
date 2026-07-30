@@ -97,6 +97,7 @@ const PLATFORMS = {
     profileId: (url) => (url.match(/\/freelancer\/([^/?#]+)/) || [null, null])[1],
 
     pages: [
+      { key: "pph_profile", label: "My profile", reads: "profile" },
       { key: "pph_feed", label: "Job feed", link: "/freelance-jobs", url: "https://www.peopleperhour.com/freelance-jobs", reads: "jobs" },
       { key: "pph_saved", label: "Saved jobs", link: "/site/saved-jobs", url: "https://www.peopleperhour.com/site/saved-jobs", reads: "jobs" },
       { key: "pph_proposals", label: "My proposals", link: "/site/proposals", url: "https://www.peopleperhour.com/site/proposals", reads: "rows" },
@@ -108,6 +109,12 @@ const PLATFORMS = {
     id: "fiverr",
     label: "Fiverr",
     host: /^(?:www\.)?fiverr\.com$/,
+    // Parked, not removed. Everything below still works and is still tested; this flag is the only
+    // thing standing between it and being live again. It moves together with the commented-out
+    // `host_permissions` in manifest.json — recognising a site Chrome will refuse to let us read is
+    // the exact failure that produced "Cannot access contents of url", so the two must never disagree.
+    enabled: false,
+
 
     // Fiverr is a listing marketplace, not a bidding one: sellers publish gigs and buyers come to
     // them. Buyer Requests — the closest thing it had to a job board — were removed in 2023. So
@@ -162,7 +169,7 @@ function platformFor(url) {
   } catch {
     return null;
   }
-  return Object.values(PLATFORMS).find((p) => p.host.test(host)) || null;
+  return Object.values(PLATFORMS).find((p) => p.enabled !== false && p.host.test(host)) || null;
 }
 
 /** The platform this page belongs to. */

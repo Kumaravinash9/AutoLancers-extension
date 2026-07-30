@@ -13,7 +13,7 @@
  * in the suite can answer that question, because only Chrome knows the answer.
  */
 import { chromium } from "playwright";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -102,12 +102,16 @@ const chromeSays = await worker.evaluate(
     ),
   HOSTS
 );
-const codeSays = await worker.evaluate((hosts) => {
-  // The worker's own table is the one the collector navigates with.
-  const claim = (h) => [/^(?:www\.)?upwork\.com$/, /^(?:www\.)?peopleperhour\.com$/, /^(?:www\.)?fiverr\.com$/]
-    .some((re) => re.test(h));
-  return hosts.map((h) => [h, claim(h)]);
-}, HOSTS);
+// The real platform table, evaluated inside the extension — not a copy of its regexes. A duplicated
+// table is what drifted last time: this file would have kept claiming Fiverr after it was parked.
+const platformsSrc = readFileSync(new URL("../src/content/platforms.js", import.meta.url), "utf8");
+const codeSays = await worker.evaluate(
+  ([hosts, code]) => {
+    eval(code);
+    return hosts.map((h) => [h, Boolean(globalThis.ALPlatforms.platformFor(`https://${h}/x`))]);
+  },
+  [HOSTS, platformsSrc]
+);
 
 console.log("\n      host                      chrome allows   code claims");
 let mismatched = 0;

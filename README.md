@@ -3,7 +3,7 @@
 Reads the marketplace page you have open and shows you exactly what it got. Optionally sends it to
 AutoLancers to be scored and filed in your queue.
 
-Supports **Upwork**, **PeoplePerHour** and **Fiverr**. Adding another is an entry in
+Supports **Upwork** and **PeoplePerHour**. Fiverr is **parked** — see below. Adding another is an entry in
 `src/content/platforms.js` — the host, how a job id is written into its URLs, and which pages are
 worth collecting. The readers themselves are shared: anchoring on headings, `itemprop` and link
 shapes turned out to travel between sites, which is also what survived Upwork's markup matching
@@ -12,9 +12,17 @@ none of the attributes we first guessed.
 ### A note on Fiverr
 
 Fiverr is a listing marketplace, not a bidding one — sellers publish gigs and buyers come to them,
-and Buyer Requests were removed in 2023. There is no job feed to score there. What the collector
-reads is your own side of it: your gigs, your orders, your briefs and your inbox. If you are looking
-for jobs to bid on, Upwork and PeoplePerHour are the two that have them.
+and Buyer Requests were removed in 2023. There is no job feed to score there, which is why it is
+**parked**: `enabled: false` on its entry in both platform tables, and its two `host_permissions`
+lines commented out in `manifest.json`.
+
+Nothing is deleted. Every reader, selector and page it had is still present and still tested — the
+reserved-word list that tells `fiverr.com/<username>` from `fiverr.com/inbox` has its own passing
+checks. Re-enabling is: uncomment two lines, flip one flag.
+
+Those three things move **together**, and a test enforces it. A platform recognised but not permitted
+is what produces *"Cannot access contents of url"* after the popup has already offered to read the
+page, so claim and permission are never allowed to disagree.
 
 Part of AutoLancers, alongside `AutoLancers-backend` and `AutoLancers-frontend`. It works on its
 own — scraping and copying needs no backend, no account and no token.
@@ -78,11 +86,19 @@ Three ways to find it, cheapest first:
 2. **A link that says it's yours**, anywhere on the page. "Your profile" and "View my profile" are
    phrases a marketplace only ever writes about the signed-in person, so the words identify you where
    a scope can't. A link with someone else's name on it cannot match.
-3. **`/freelancers/` with no id** — Upwork resolves it against your session and redirects to your own
-   profile. This depends on nothing about the page's markup, so it survives a redesign that moves the
-   header, and it works from anywhere. It costs a navigation, which is why it's last. That URL is also
-   the collector's new **My profile** page, so a collection can mirror your profile whoever is signed
-   in. PeoplePerHour and Fiverr have no known equivalent, so those rely on 1 and 2.
+3. **A self-resolving URL**, where the platform has one — Upwork's `/freelancers/` with no id
+   redirects to your own profile. Depends on nothing about the page's markup, so it survives a redesign
+   that moves the header. It costs a navigation, which is why it's last.
+
+Both marketplaces have a **My profile** page in the collector, ticked by default. PeoplePerHour needs
+no URL for it at all: its account menu is in the header of every page, so step 1 answers from wherever
+the collection already is — which is also why nothing here is hardcoded to one account.
+
+Then it **verifies at the destination**. Following a link is not proof of arrival: a redirect, an
+interstitial or a stale link lands you somewhere else, and this is the one page whose contents overwrite
+the profile row every score is computed from. A profile that can't be confirmed as yours is skipped
+with its reason on the row, and the job listings carry on collecting — an unidentifiable profile is no
+reason to abandon a run that is otherwise working.
 
 `readProfile()` then reports `is_own` by comparing the account id in the URL against the id that link
 carries — by id, not by name, and not by whether an "Edit profile" button is showing. `null` means

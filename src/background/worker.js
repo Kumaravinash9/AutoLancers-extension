@@ -99,6 +99,7 @@ const PLATFORMS = {
     // must not match a host the readers would then be refused access to.
     origins: ["https://www.peopleperhour.com/*", "https://peopleperhour.com/*"],
     pages: [
+      { key: "pph_profile", label: "My profile", reads: "profile" },
       { key: "pph_feed", label: "Job feed", link: "/freelance-jobs", url: "https://www.peopleperhour.com/freelance-jobs", reads: "jobs" },
       { key: "pph_saved", label: "Saved jobs", link: "/site/saved-jobs", url: "https://www.peopleperhour.com/site/saved-jobs", reads: "jobs" },
       { key: "pph_proposals", label: "My proposals", link: "/site/proposals", url: "https://www.peopleperhour.com/site/proposals", reads: "rows" },
@@ -110,6 +111,12 @@ const PLATFORMS = {
     id: "fiverr",
     label: "Fiverr",
     host: /^(?:www\.)?fiverr\.com$/,
+    // Parked, not removed. Everything below still works and is still tested; this flag is the only
+    // thing standing between it and being live again. It moves together with the commented-out
+    // `host_permissions` in manifest.json — recognising a site Chrome will refuse to let us read is
+    // the exact failure that produced "Cannot access contents of url", so the two must never disagree.
+    enabled: false,
+
     // Exactly what `host_permissions` grants. Used to find an already-open tab, so it
     // must not match a host the readers would then be refused access to.
     origins: ["https://www.fiverr.com/*", "https://fiverr.com/*"],
@@ -123,11 +130,14 @@ const PLATFORMS = {
 };
 
 
-export const PLATFORM_LIST = Object.values(PLATFORMS);
+// Disabled platforms are excluded here rather than filtered at each use site, so a parked
+// marketplace cannot leak back in through the popup's picker or a page lookup.
+export const PLATFORM_LIST = Object.values(PLATFORMS).filter((p) => p.enabled !== false);
 
 /** Pages for the site of the tab we are working in. */
 function pagesFor(platformId) {
-  return PLATFORMS[platformId]?.pages || [];
+  const platform = PLATFORMS[platformId];
+  return platform && platform.enabled !== false ? platform.pages : [];
 }
 
 function platformForUrl(url) {
@@ -325,26 +335,99 @@ async function readInTab(tabId, func, args = []) {
 }
 
 /**
+ * Get to your own profile, then read it — for the pages that declare `reads: "profile"`.
+ *
+ * Three ways in, cheapest first, and the cheapest needs nothing configured:
+ *
+ *   1. Ask the page we are already on. The account menu is in the header of every page of these
+ *      sites, so by the time a collection reaches this step the answer is right there. This is why
+ *      PeoplePerHour needs no URL at all.
+ *   2. Follow the platform's own self-resolving URL if it has one — Upwork's `/freelancers/`
+ *      redirects to whoever is signed in. Depends on nothing about the markup, so it survives a
+ *      redesign that moves the header.
+ *   3. Give up, and say so.
+ *
+ * Then **verify at the destination**. Following a link is not proof of arrival: a redirect, an
+ * interstitial or a stale link lands you somewhere else, and this is the one page whose contents
+ * overwrite the profile row every score in the app is computed from. A profile that cannot be
+ * confirmed as yours is skipped, not guessed at — the reason lands on the row, and the rest of the
+ * collection carries on, because an unidentifiable profile is no reason to abandon job listings that
+ * are collecting fine.
+ */
+async function readProfileIn(tabId, page, platform) {
+  let found = await readInTab(tabId, () => globalThis.ALExtract.findOwnProfile());
+
+  if (found?.status !== "ok" && (found?.navigateTo || page.url)) {
+    await chrome.tabs.update(tabId, { url: found?.navigateTo || page.url });
+    await sleep(300);
+    await waitForTab(tabId);
+    found = await readInTab(tabId, () => globalThis.ALExtract.findOwnProfile());
+  }
+
+  if (found?.status === "signed_out" || found?.status === "blocked") {
+    return { key: page.key, platform: platform?.id || "unknown", status: found.status, count: 0,
+      error: `Not signed in to ${platform?.label || "this site"}.` };
+  }
+
+  // Already there — arriving via `/freelancers/` lands on the profile itself, so there is nothing
+  // left to follow.
+  const here = await readInTab(tabId, () => location.href);
+  if (found?.status === "ok" && found.url && !here.startsWith(found.url)) {
+    await chrome.tabs.update(tabId, { url: found.url });
+    await sleep(300);
+    await waitForTab(tabId);
+  } else if (found?.status !== "ok") {
+    return {
+      key: page.key,
+      platform: platform?.id || "unknown",
+      count: 0,
+      error:
+        "Couldn't find your own profile — nothing on the page identifies it. Open your profile from " +
+        "the site's account menu once, then collect again.",
+    };
+  }
+
+  const read = await readInTab(tabId, (key) => globalThis.ALExtract.readList(key), [page.key]);
+
+  // The verdict comes from the page we ended up on, not from how we got here.
+  if (read?.profile && read.profile.is_own !== true) {
+    return {
+      ...read,
+      count: 0,
+      profile: undefined,
+      error:
+        read.profile.is_own === false
+          ? "That wasn't your profile, so it wasn't read — storing it would overwrite your own."
+          : "Couldn't confirm that profile is yours, so it wasn't read.",
+    };
+  }
+  return read;
+}
+
+/**
  * Read a page in a tab, reusing one if given.
  *
  * Sequentially there is no reason to open a tab per page: one tab navigated from URL to URL does
  * the same work while only ever putting a single extra tab on screen. Opening and discarding eight
  * is both alarming to watch and a louder pattern than one tab browsing.
  */
-async function readOnePage(page, reuseTabId = null) {
+async function readOnePage(page, reuseTabId = null, platform = null) {
   let tabId = reuseTabId;
   try {
     if (tabId === null) {
-      // Opened inactive so the collection doesn't yank focus away mid-run.
-      const tab = await chrome.tabs.create({ url: page.url, active: false });
+      // Opened inactive so the collection doesn't yank focus away mid-run. A profile page may have no
+      // URL of its own — it is found from wherever we are — so fall back to the platform's own entry
+      // point for the tab to start from.
+      const tab = await chrome.tabs.create({ url: page.url || platform?.origins?.[0]?.replace(/\*$/, "") , active: false });
       tabId = tab.id;
-    } else {
+    } else if (page.url) {
       await chrome.tabs.update(tabId, { url: page.url });
       // `update` resolves before navigation starts; without this the wait can pass against the
       // page we were already on and read the wrong one.
       await sleep(300);
     }
     await waitForTab(tabId);
+    if (page.reads === "profile") return await readProfileIn(tabId, page, platform);
     return await readInTab(tabId, (key) => globalThis.ALExtract.readList(key), [page.key]);
   } finally {
     // Only close what we own. A reused tab is closed once, by the caller, at the end of the run.
@@ -389,7 +472,10 @@ async function readByClicking(pages, tabId, results, errors, pushes, platformId,
         await waitForTab(tabId);
       }
 
-      results[page.key] = await readInTab(tabId, (key) => globalThis.ALExtract.readList(key), [page.key]);
+      results[page.key] =
+        page.reads === "profile"
+          ? await readProfileIn(tabId, page, PLATFORMS[platformId] || null)
+          : await readInTab(tabId, (key) => globalThis.ALExtract.readList(key), [page.key]);
       await filePage(page, results[page.key], platformId, pushes);
 
       const problem = sessionProblem(results[page.key]);
@@ -440,7 +526,7 @@ async function run(selectedKeys, platformId = null) {
 
   // Clicking needs a tab already on Upwork to start from, and only makes sense one page at a time.
   if (navigateByClicking && (Number(concurrency) || 1) === 1) {
-    const platform = platformId ? PLATFORMS[platformId] : null;
+    const platform = platformId ? PLATFORM_LIST.find((p) => p.id === platformId) || null : null;
     // The platform's own declared origins, not a `*.` wildcard built from its id. The wildcard also
     // matched community.upwork.com and support.upwork.com — tabs the manifest grants no access to, so
     // injecting into one failed with "Cannot access contents of url" after the run had already begun.
@@ -483,7 +569,7 @@ async function run(selectedKeys, platformId = null) {
       await setState({ current: page.label });
       let problem = null;
       try {
-        results[page.key] = await readOnePage(page, sharedTabId);
+        results[page.key] = await readOnePage(page, sharedTabId, PLATFORMS[platformId] || null);
         await filePage(page, results[page.key], platformId, pushes);
         problem = sessionProblem(results[page.key]);
         if (problem) errors[page.key] = results[page.key].error;
@@ -692,7 +778,7 @@ chrome.runtime.onMessage.addListener((message, _sender, respond) => {
     // Either "what site is this tab on" or "give me this named platform" — the popup uses the
     // second when you are not on a marketplace and pick one from the list.
     const platform = message.platformId
-      ? PLATFORMS[message.platformId] || null
+      ? PLATFORM_LIST.find((p) => p.id === message.platformId) || null
       : message.url
         ? platformForUrl(message.url)
         : null;

@@ -288,7 +288,7 @@ const STATE_KEY = "collect.state";
  * never agreed to any of this — and orders and contracts are rarely what someone is after on a
  * first run.
  */
-const DEFAULT_ON = /(own_profile|best_matches|most_recent|saved_jobs|invites|pph_feed|fvr_briefs)/;
+const DEFAULT_ON = /(own_profile|pph_profile|best_matches|most_recent|saved_jobs|invites|pph_feed|fvr_briefs)/;
 
 let REGISTRY = null;
 

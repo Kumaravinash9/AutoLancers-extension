@@ -45,6 +45,19 @@ async function readFrom(fixture, href, call, ...args) {
   }, [src.replace(/location\.href/g, "window.__href"), href, call, args]);
 }
 
+/**
+ * The manifest, as Chrome reads it.
+ *
+ * `manifest.json` may carry `//` comments — Chrome strips them, JSON.parse does not. Only lines that
+ * *begin* with `//` are dropped, so an `https://` inside a string is never touched.
+ */
+function manifest() {
+  const raw = readFileSync(new URL("../manifest.json", import.meta.url), "utf8");
+  return JSON.parse(
+    raw.split("\n").filter((line) => !line.trimStart().startsWith("//")).join("\n")
+  );
+}
+
 console.log("job page:");
 const job = await read("job.html", "readJob");
 check("external_id from URL", job.external_id, "~021999888777666555");
@@ -98,8 +111,10 @@ console.log("\nplatform routing:");
       ["https://www.upwork.com/freelancers/~0139befba192c820d1", "profile"],
       ["https://www.peopleperhour.com/freelance-jobs/technology/build-a-dashboard-4123456", "job"],
       ["https://www.peopleperhour.com/freelancer/avinash-k", "profile"],
-      ["https://www.fiverr.com/briefs/abc123def", "job"],
-      ["https://www.fiverr.com/avinashk", "profile"],
+      // Fiverr is parked (`enabled: false`), so nothing on it routes anywhere — the same answer an
+      // unrelated site gets, because that is what "we do not read this" means.
+      ["https://www.fiverr.com/briefs/abc123def", "unsupported"],
+      ["https://www.fiverr.com/avinashk", "unsupported"],
       ["https://example.com/jobs/123", "unsupported"],
     ];
     return cases.map(([url, want]) => {
@@ -203,8 +218,8 @@ check("client block all-null, not zeroes", [bare.client.rating, bare.client.tota
 // recognising it, because the offer is already made by the time it fails.
 console.log("\nhosts: what the code claims and what the manifest grants:");
 {
-  const manifest = JSON.parse(readFileSync(new URL("../manifest.json", import.meta.url), "utf8"));
-  const granted = manifest.host_permissions
+  const m = manifest();
+  const granted = m.host_permissions
     .filter((p) => p.startsWith("https://"))
     .map((p) => p.split("/")[2]);
 
@@ -213,6 +228,8 @@ console.log("\nhosts: what the code claims and what the manifest grants:");
     const hosts = [
       "www.upwork.com", "upwork.com", "community.upwork.com", "support.upwork.com",
       "www.peopleperhour.com", "peopleperhour.com",
+      // Parked: `enabled: false` in the table and its host_permissions commented out. The agreement
+      // rule is what keeps those two in step — claimed but ungranted is the failure it catches.
       "www.fiverr.com", "fiverr.com", "blog.fiverr.com",
       "evil-upwork.com", "upwork.com.attacker.net",
     ];
@@ -231,15 +248,25 @@ console.log("\nhosts: what the code claims and what the manifest grants:");
   // careless "contains upwork.com" would have taken it.
   check("a lookalike host is refused", claimed.find((c) => c.host === "upwork.com.attacker.net").platform, null);
 
-  // The tab query the collector uses to find an already-open tab must ask for exactly those origins.
+  // The tab query the collector uses to find an already-open tab must ask for exactly those origins —
+  // for every platform it can actually reach. A parked entry keeps its origins so re-enabling is one
+  // flag, and the code never reads them because PLATFORM_LIST excludes it.
   const worker = readFileSync(new URL("../src/background/worker.js", import.meta.url), "utf8");
-  const declared = [...worker.matchAll(/origins: \[(.*?)\]/g)]
-    .flatMap((m) => m[1].split(",").map((s) => s.trim().replace(/^"|"$/g, "")));
+  const blocks = worker.split(/\n  (?=[a-z]+: \{)/).filter((b) => b.includes("origins: ["));
+  const live = blocks.filter((b) => !b.includes("enabled: false"));
+  const declared = live.flatMap((b) =>
+    [...b.matchAll(/origins: \[(.*?)\]/g)].flatMap((mm) =>
+      mm[1].split(",").map((x) => x.trim().replace(/^"|"$/g, ""))
+    )
+  );
+  check("every live platform declares origins", live.length, 2);
   check(
-    "the collector queries only granted origins",
-    declared.every((o) => manifest.host_permissions.includes(o)) && declared.length === 6,
+    "and the collector queries only granted ones",
+    declared.length > 0 && declared.every((o) => m.host_permissions.includes(o)),
     true
   );
+  // The parked one keeps its origins, so re-enabling stays a one-flag change.
+  check("a parked platform keeps its origins for later", blocks.length - live.length, 1);
 }
 
 // --- signed out ------------------------------------------------------------------------
@@ -356,25 +383,52 @@ check("readList reads a profile page", [asPage.key, asPage.count], ["own_profile
 check("and carries the is_own verdict through", asPage.profile.is_own, true);
 check("with the profile itself", asPage.profile.display_name, "Avinash K.");
 
-// Fiverr's own pages are shaped exactly like a username, so telling them apart takes a list. A page
-// misread as a profile gets scraped as one and then written into your profile row.
-console.log("\nFiverr page types (a username and a section are the same shape):");
-const fiverr = await page.evaluate((code) => {
-  Object.defineProperty(window, "__href", { value: "https://www.fiverr.com/", configurable: true });
-  eval(code);
-  const p = globalThis.ALPlatforms.PLATFORMS.fiverr;
-  return {
-    seller: p.isProfilePage("https://www.fiverr.com/some.seller_1"),
-    query: p.isProfilePage("https://www.fiverr.com/my-username?ref=x"),
-    inbox: p.isProfilePage("https://www.fiverr.com/inbox"),
-    orders: p.isProfilePage("https://www.fiverr.com/orders"),
-    settings: p.isProfilePage("https://www.fiverr.com/settings"),
-    gig: p.isProfilePage("https://www.fiverr.com/gigs/abc"),
-  };
-}, src.replace(/location\.href/g, "window.__href"));
-check("a seller username is a profile", [fiverr.seller, fiverr.query], [true, true]);
-check("/inbox, /orders and /settings are not", [fiverr.inbox, fiverr.orders, fiverr.settings], [false, false, false]);
-check("nor is a gig", fiverr.gig, false);
+// PeoplePerHour needs no URL for this: its account menu is in the header of every page, so the answer
+// is wherever the collection already is. Its id is the slug, which is what a later sighting dedupes on.
+console.log("\nPeoplePerHour profile, discovered with no URL configured:");
+{
+  await page.setContent(`
+    <header><nav>
+      <a href="/freelancer/avinash-k">Your profile</a>
+      <a href="/freelancer/someone-else">Priya S.</a>
+    </nav></header>
+    <main><h1>Job feed</h1></main>`);
+  const found = await page.evaluate((code) => {
+    Object.defineProperty(window, "__href", { value: "https://www.peopleperhour.com/freelance-jobs", configurable: true });
+    eval(code);
+    return globalThis.ALExtract.findOwnProfile();
+  }, src.replace(/location\.href/g, "window.__href"));
+
+  // Found from a page that is not a profile at all — which is the whole point: no URL was needed.
+  check("found from a job feed's own header", found.status, "ok");
+  check("the slug is the account identity", found.id, "avinash-k");
+  check("not the other freelancer in the same nav", found.url.includes("someone-else"), false);
+}
+
+// Fiverr is parked. Its readers, selectors and reserved list are all still here and still correct —
+// this checks only that nothing reaches them, in both directions at once, since a platform recognised
+// but not permitted is the failure that produced "Cannot access contents of url".
+console.log("\nparked platform:");
+{
+  const parked = await page.evaluate((code) => {
+    Object.defineProperty(window, "__href", { value: "https://www.fiverr.com/", configurable: true });
+    eval(code);
+    const table = globalThis.ALPlatforms.PLATFORMS.fiverr;
+    return {
+      stillDefined: Boolean(table),
+      flag: table.enabled,
+      // The readers are untouched: the reserved list still tells a username from a section.
+      readersIntact: table.isProfilePage("https://www.fiverr.com/some.seller_1") === true
+        && table.isProfilePage("https://www.fiverr.com/inbox") === false,
+      recognised: globalThis.ALPlatforms.platformFor("https://www.fiverr.com/me")?.id ?? null,
+    };
+  }, src.replace(/location\.href/g, "window.__href"));
+
+  check("the entry is kept, not deleted", parked.stillDefined, true);
+  check("one flag is all that parks it", parked.flag, false);
+  check("its readers are untouched and still correct", parked.readersIntact, true);
+  check("but no page is recognised as Fiverr", parked.recognised, null);
+}
 
 // --- what gets sent to the backend ----------------------------------------------------
 //
