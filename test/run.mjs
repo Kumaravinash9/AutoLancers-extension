@@ -319,6 +319,43 @@ check(
   true
 );
 
+// Second pass: a link that *says* it is yours, anywhere on the page. "Your profile" is a phrase a
+// marketplace only ever writes about the signed-in person, so the words identify you where a scope
+// cannot — and the fixture puts two other freelancers' links in the same container to prove it.
+const byLabel = await readFrom(
+  "profile-label.html",
+  "https://www.upwork.com/freelancers/~019abcdef123456789",
+  "findOwnProfile"
+);
+check("found by what the link says, with no account menu", byLabel.id, "~019abcdef123456789");
+check("and it says which way it got there", byLabel.via, "label");
+check(
+  "someone else's link in the same container is not taken",
+  [byLabel.id === "~01ffffffffffffffff", byLabel.id === "~01aaaaaaaaaaaaaaaa"],
+  [false, false]
+);
+
+// Nothing on the page identifies you: the answer is where to navigate, not a guess. Upwork resolves
+// /freelancers/ against your session, so following it lands on your own profile whoever you are.
+const nowhere = await readFrom(
+  "profile.html",
+  "https://www.upwork.com/freelancers/~019abcdef123456789",
+  "findOwnProfile"
+);
+check("undecidable pages say where to look instead", nowhere.navigateTo, "https://www.upwork.com/freelancers/");
+check("and do not guess an id", [nowhere.status, nowhere.id], ["not_found", null]);
+
+// The collector can now read your profile as one of its pages, which it never could before.
+const asPage = await readFrom(
+  "own-profile.html",
+  "https://www.upwork.com/freelancers/~019abcdef123456789",
+  "readList",
+  "own_profile"
+);
+check("readList reads a profile page", [asPage.key, asPage.count], ["own_profile", 1]);
+check("and carries the is_own verdict through", asPage.profile.is_own, true);
+check("with the profile itself", asPage.profile.display_name, "Avinash K.");
+
 // Fiverr's own pages are shaped exactly like a username, so telling them apart takes a list. A page
 // misread as a profile gets scraped as one and then written into your profile row.
 console.log("\nFiverr page types (a username and a section are the same shape):");

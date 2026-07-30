@@ -146,6 +146,15 @@ export function collectionPayload({ platform, page, result, useLlm, now = null }
  * keeps whatever it already got, and sixty jobs is a single request either way.
  */
 export async function pushPage(args) {
+  // Your own profile has its own endpoint and its own rules — it mirrors onto the profile row every
+  // score is computed from, so it is gated on `is_own` rather than accepted like a page of listings.
+  // Routing it here keeps the collector from needing to know that.
+  if ((args.page?.reads || "jobs") === "profile") {
+    const me = args.result?.profile;
+    if (!me || me.error) throw new Error(me?.error || "The profile could not be read.");
+    const saved = await pushProfile(me);
+    return { stored: 1, created: 1, updated: 0, profile: true, skills: saved?.skills ?? 0 };
+  }
   return post("/ingest/collection", collectionPayload(args));
 }
 
@@ -175,6 +184,8 @@ export function describePush(summary) {
       summary.updated ? " · unchanged" : ""
     }`;
   }
+
+  if (summary.profile) return `mirrored · ${summary.skills} skills`;
 
   const parts = [`${summary.stored} stored`];
   if (summary.created !== summary.stored) parts.push(`${summary.created} new`);

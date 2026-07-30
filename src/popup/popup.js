@@ -281,11 +281,14 @@ const STATE_KEY = "collect.state";
 /**
  * Which pages start ticked.
  *
- * Job listings only. Messages stays off because that list is two-party data — the other half
- * belongs to someone who never agreed to any of this — and orders and contracts are rarely what
- * someone is after on a first run.
+ * Job listings, plus your own profile — which is your data, and is what every score is computed
+ * against, so a board built without it is scored against nothing.
+ *
+ * Messages stays off because that list is two-party data — the other half belongs to someone who
+ * never agreed to any of this — and orders and contracts are rarely what someone is after on a
+ * first run.
  */
-const DEFAULT_ON = /(best_matches|most_recent|saved_jobs|invites|pph_feed|fvr_briefs)/;
+const DEFAULT_ON = /(own_profile|best_matches|most_recent|saved_jobs|invites|pph_feed|fvr_briefs)/;
 
 let REGISTRY = null;
 

@@ -59,7 +59,15 @@ const PLATFORMS = {
     // The id in the URL is the account identity; two profiles are the same person iff these match.
     profileId: (url) => (url.match(/~[0-9a-zA-Z]{10,}/) || [null])[0],
 
+    // `/freelancers/` with no id: Upwork resolves it against your session and redirects to your own
+    // profile. Worth having as a fallback because it depends on nothing about the page's markup —
+    // where the header link is one redesign away from moving — and because it works from anywhere,
+    // including a page with no account menu on it at all. It costs a navigation, which is why it is
+    // the fallback rather than the first thing tried.
+    ownProfileUrl: "https://www.upwork.com/freelancers/",
+
     pages: [
+      { key: "own_profile", label: "My profile", link: "/freelancers/", url: "https://www.upwork.com/freelancers/", reads: "profile" },
       { key: "best_matches", label: "Best matches", link: "/nx/find-work/best-matches", url: "https://www.upwork.com/nx/find-work/best-matches", reads: "jobs" },
       { key: "most_recent", label: "Most recent", link: "/nx/find-work/most-recent", url: "https://www.upwork.com/nx/find-work/most-recent", reads: "jobs" },
       { key: "saved_jobs", label: "Saved jobs", link: "/nx/search/jobs/saved", url: "https://www.upwork.com/nx/search/jobs/saved/", reads: "jobs" },

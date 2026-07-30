@@ -870,6 +870,14 @@ function readList(key) {
       const rooms = readMessageRooms();
       return { ...base, count: rooms.length, rooms };
     }
+    case "profile": {
+      // Navigated here by the platform's `ownProfileUrl`, which resolves against your session — so
+      // whichever account is signed in, this landed on that account's own profile. `readProfile`
+      // still checks `is_own` from the page rather than trusting how we arrived, because a redirect
+      // that quietly went somewhere else must not be mistaken for proof.
+      const me = readProfile();
+      return { ...base, count: me?.error ? 0 : 1, profile: me, error: me?.error };
+    }
     default:
       return { ...base, error: `No reader configured for ${key}` };
   }
@@ -894,7 +902,7 @@ function findOwnProfile() {
   const session = sessionState();
   if (session.status !== "ok") return { status: session.status, url: null, id: null };
 
-  // Header and account menus only. A profile link inside a job card or a review is *someone else's*,
+  // Header and account menus first. A profile link inside a job card or a review is *someone else's*,
   // and that is the whole distinction being drawn here.
   const scopes = [
     "header",
@@ -910,11 +918,27 @@ function findOwnProfile() {
       for (const anchor of container.querySelectorAll(platform.ownProfileLink)) {
         const url = absolute(anchor.getAttribute("href"));
         if (!url || !platform.isProfilePage(url)) continue;
-        return { status: "ok", url: url.split("?")[0], id: platform.profileId?.(url) || null };
+        return { status: "ok", url: url.split("?")[0], id: platform.profileId?.(url) || null, via: "menu" };
       }
     }
   }
-  return { status: "not_found", url: null, id: null };
+
+  // Then anywhere on the page, but only a link that *says* it is yours. "Your profile" and "View my
+  // profile" are phrases a marketplace only ever writes about the signed-in person — matching the
+  // words a human reads is the same trick the rest of this file uses for fields, and it survives the
+  // account menu being restructured. A link with someone else's name on it cannot match.
+  for (const anchor of document.querySelectorAll(platform.ownProfileLink)) {
+    const label = clean(anchor.textContent || anchor.getAttribute("aria-label") || "");
+    if (!/^(?:view |see |go to )?(?:your|my) profile$/i.test(label)) continue;
+    const url = absolute(anchor.getAttribute("href"));
+    if (!url || !platform.isProfilePage(url)) continue;
+    return { status: "ok", url: url.split("?")[0], id: platform.profileId?.(url) || null, via: "label" };
+  }
+
+  // Nothing on this page says which profile is yours. `ownProfileUrl` is the way out where a platform
+  // has one — Upwork resolves `/freelancers/` against your session and redirects to your own profile —
+  // but following it needs a navigation, which only the collector can do.
+  return { status: "not_found", url: null, id: null, navigateTo: platform.ownProfileUrl || null };
 }
 
 /**

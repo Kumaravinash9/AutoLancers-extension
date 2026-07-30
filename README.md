@@ -71,6 +71,19 @@ The marketplace itself knows which one is yours, and it puts a link to it in its
 inside a job card or a review is *someone else's*. Nothing is configured and nothing is hardcoded to
 one account: it answers for whoever is signed in, on whatever machine.
 
+Three ways to find it, cheapest first:
+
+1. **The account menu** on whatever page you're already on — free, no navigation. Header and
+   account-menu scopes only, because a profile link inside a job card or a review is *someone else's*.
+2. **A link that says it's yours**, anywhere on the page. "Your profile" and "View my profile" are
+   phrases a marketplace only ever writes about the signed-in person, so the words identify you where
+   a scope can't. A link with someone else's name on it cannot match.
+3. **`/freelancers/` with no id** — Upwork resolves it against your session and redirects to your own
+   profile. This depends on nothing about the page's markup, so it survives a redesign that moves the
+   header, and it works from anywhere. It costs a navigation, which is why it's last. That URL is also
+   the collector's new **My profile** page, so a collection can mirror your profile whoever is signed
+   in. PeoplePerHour and Fiverr have no known equivalent, so those rely on 1 and 2.
+
 `readProfile()` then reports `is_own` by comparing the account id in the URL against the id that link
 carries — by id, not by name, and not by whether an "Edit profile" button is showing. `null` means
 undecidable, and the backend refuses a `null` exactly as it refuses a `false`: "probably yours" is not
