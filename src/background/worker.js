@@ -74,7 +74,10 @@ const PLATFORMS = {
   upwork: {
     id: "upwork",
     label: "Upwork",
-    host: /(^|\.)upwork\.com$/,
+    host: /^(?:www\.)?upwork\.com$/,
+    // Exactly what `host_permissions` grants. Used to find an already-open tab, so it
+    // must not match a host the readers would then be refused access to.
+    origins: ["https://www.upwork.com/*", "https://upwork.com/*"],
     pages: [
       { key: "best_matches", label: "Best matches", link: "/nx/find-work/best-matches", url: "https://www.upwork.com/nx/find-work/best-matches", reads: "jobs" },
       { key: "most_recent", label: "Most recent", link: "/nx/find-work/most-recent", url: "https://www.upwork.com/nx/find-work/most-recent", reads: "jobs" },
@@ -90,7 +93,10 @@ const PLATFORMS = {
   peopleperhour: {
     id: "peopleperhour",
     label: "PeoplePerHour",
-    host: /(^|\.)peopleperhour\.com$/,
+    host: /^(?:www\.)?peopleperhour\.com$/,
+    // Exactly what `host_permissions` grants. Used to find an already-open tab, so it
+    // must not match a host the readers would then be refused access to.
+    origins: ["https://www.peopleperhour.com/*", "https://peopleperhour.com/*"],
     pages: [
       { key: "pph_feed", label: "Job feed", link: "/freelance-jobs", url: "https://www.peopleperhour.com/freelance-jobs", reads: "jobs" },
       { key: "pph_saved", label: "Saved jobs", link: "/site/saved-jobs", url: "https://www.peopleperhour.com/site/saved-jobs", reads: "jobs" },
@@ -102,7 +108,10 @@ const PLATFORMS = {
   fiverr: {
     id: "fiverr",
     label: "Fiverr",
-    host: /(^|\.)fiverr\.com$/,
+    host: /^(?:www\.)?fiverr\.com$/,
+    // Exactly what `host_permissions` grants. Used to find an already-open tab, so it
+    // must not match a host the readers would then be refused access to.
+    origins: ["https://www.fiverr.com/*", "https://fiverr.com/*"],
     pages: [
       { key: "fvr_gigs", label: "My gigs", link: "/users", url: "https://www.fiverr.com/users/_/manage_gigs", reads: "rows" },
       { key: "fvr_orders", label: "Orders", link: "/orders", url: "https://www.fiverr.com/orders", reads: "rows" },
@@ -431,9 +440,11 @@ async function run(selectedKeys, platformId = null) {
   // Clicking needs a tab already on Upwork to start from, and only makes sense one page at a time.
   if (navigateByClicking && (Number(concurrency) || 1) === 1) {
     const platform = platformId ? PLATFORMS[platformId] : null;
-    const [openTab] = platform
-      ? await chrome.tabs.query({ url: `https://*.${platform.id === "peopleperhour" ? "peopleperhour" : platform.id}.com/*` })
-      : [];
+    // The platform's own declared origins, not a `*.` wildcard built from its id. The wildcard also
+    // matched community.upwork.com and support.upwork.com — tabs the manifest grants no access to, so
+    // injecting into one failed with "Cannot access contents of url" after the run had already begun.
+    // (The ternary it replaces returned platform.id in both branches, so it never did anything.)
+    const [openTab] = platform ? await chrome.tabs.query({ url: platform.origins }) : [];
     if (openTab) {
       await readByClicking(pages, openTab.id, results, errors, pushes, platform.id, async (done) => {
         await publish({ done, results, errors });

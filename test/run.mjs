@@ -194,6 +194,54 @@ check("proposals absent, not zero", bare.proposal_count, null);
 check("skills empty list", bare.skills, []);
 check("client block all-null, not zeroes", [bare.client.rating, bare.client.total_spent], [null, null]);
 
+// --- permission and recognition must agree --------------------------------------------
+//
+// The bug this pins: the host regex accepted any *.upwork.com while the manifest granted only
+// www.upwork.com. So the popup would recognise a community.upwork.com tab, offer to read it, and the
+// injection would fail with "Cannot access contents of url ... must request permission to access this
+// host" — after the run had already started. Recognising a page we cannot read is worse than not
+// recognising it, because the offer is already made by the time it fails.
+console.log("\nhosts: what the code claims and what the manifest grants:");
+{
+  const manifest = JSON.parse(readFileSync(new URL("../manifest.json", import.meta.url), "utf8"));
+  const granted = manifest.host_permissions
+    .filter((p) => p.startsWith("https://"))
+    .map((p) => p.split("/")[2]);
+
+  const claimed = await page.evaluate((code) => {
+    eval(code);
+    const hosts = [
+      "www.upwork.com", "upwork.com", "community.upwork.com", "support.upwork.com",
+      "www.peopleperhour.com", "peopleperhour.com",
+      "www.fiverr.com", "fiverr.com", "blog.fiverr.com",
+      "evil-upwork.com", "upwork.com.attacker.net",
+    ];
+    return hosts.map((h) => ({
+      host: h,
+      platform: globalThis.ALPlatforms.platformFor(`https://${h}/x`)?.id ?? null,
+    }));
+  }, src);
+
+  for (const { host, platform } of claimed) {
+    // Every host the code claims must be one the manifest grants, and vice versa for these.
+    const allowed = granted.includes(host);
+    check(`${platform ? "claims" : "ignores"} ${host}`, Boolean(platform), allowed);
+  }
+  // A lookalike domain must never match. `upwork.com.attacker.net` ends with nothing we allow, but a
+  // careless "contains upwork.com" would have taken it.
+  check("a lookalike host is refused", claimed.find((c) => c.host === "upwork.com.attacker.net").platform, null);
+
+  // The tab query the collector uses to find an already-open tab must ask for exactly those origins.
+  const worker = readFileSync(new URL("../src/background/worker.js", import.meta.url), "utf8");
+  const declared = [...worker.matchAll(/origins: \[(.*?)\]/g)]
+    .flatMap((m) => m[1].split(",").map((s) => s.trim().replace(/^"|"$/g, "")));
+  check(
+    "the collector queries only granted origins",
+    declared.every((o) => manifest.host_permissions.includes(o)) && declared.length === 6,
+    true
+  );
+}
+
 // --- signed out ------------------------------------------------------------------------
 //
 // The failure with no symptom. A login page loads perfectly, so the tab reaches `complete` and

@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "AutoLancers",
   "version": "0.1.0",
-  "description": "Read the marketplace page you have open \u2014 Upwork, PeoplePerHour or Fiverr \u2014 and export what it holds.",
+  "description": "Read the marketplace page you have open — Upwork, PeoplePerHour or Fiverr — and export what it holds.",
   "permissions": [
     "storage",
     "activeTab",
@@ -12,8 +12,11 @@
   "host_permissions": [
     "http://localhost:8010/*",
     "https://www.upwork.com/*",
+    "https://upwork.com/*",
     "https://www.peopleperhour.com/*",
-    "https://www.fiverr.com/*"
+    "https://peopleperhour.com/*",
+    "https://www.fiverr.com/*",
+    "https://fiverr.com/*"
   ],
   "externally_connectable": {
     "matches": [

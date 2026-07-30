@@ -38,7 +38,7 @@ const PLATFORMS = {
   upwork: {
     id: "upwork",
     label: "Upwork",
-    host: /(^|\.)upwork\.com$/,
+    host: /^(?:www\.)?upwork\.com$/,
 
     // `~021…` appears in both link shapes Upwork uses: bare, and slug-then-id.
     jobId: (url) => (url.match(/~[0-9a-zA-Z]{10,}/) || [null])[0],
@@ -74,7 +74,7 @@ const PLATFORMS = {
   peopleperhour: {
     id: "peopleperhour",
     label: "PeoplePerHour",
-    host: /(^|\.)peopleperhour\.com$/,
+    host: /^(?:www\.)?peopleperhour\.com$/,
 
     // PPH uses a numeric id at the end of a slug: /freelance-jobs/…-4123456
     jobId: (url) => (url.match(/-(\d{5,})(?:\/|$|\?)/) || [null, null])[1],
@@ -99,7 +99,7 @@ const PLATFORMS = {
   fiverr: {
     id: "fiverr",
     label: "Fiverr",
-    host: /(^|\.)fiverr\.com$/,
+    host: /^(?:www\.)?fiverr\.com$/,
 
     // Fiverr is a listing marketplace, not a bidding one: sellers publish gigs and buyers come to
     // them. Buyer Requests — the closest thing it had to a job board — were removed in 2023. So
@@ -139,7 +139,14 @@ const PLATFORMS = {
   },
 };
 
-/** The platform for a URL, or null when we are somewhere we do not read. */
+/**
+ * The platform for a URL, or null when we are somewhere we do not read.
+ *
+ * Matched on the exact host, not on "ends with upwork.com". Two reasons, and they agree:
+ * `community.upwork.com` is a forum full of other people's posts rather than the job board, so
+ * claiming it would be wrong on the merits — and the manifest grants no access to it either, so the
+ * readers would fail with "Cannot access contents of url" after the popup had already offered.
+ */
 function platformFor(url) {
   let host;
   try {

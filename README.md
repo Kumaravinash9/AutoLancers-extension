@@ -92,6 +92,15 @@ Only these, by explicit allowlist:
 | PeoplePerHour | `/freelancer/…` | `/freelance-jobs/…-4123456` |
 | Fiverr | `/your-username` | `/briefs/…` |
 
+Hosts are matched **exactly** — `www.upwork.com` and the bare `upwork.com`, nothing else. Not
+"anything ending in upwork.com": `community.upwork.com` is a forum full of other people's posts and
+`support.upwork.com` is help articles, so claiming them would be wrong on the merits. It was also
+broken in practice — the host regex used to accept any subdomain while `host_permissions` granted only
+`www.`, so the popup would recognise such a tab, offer to read it, and *then* fail with
+*"Cannot access contents of url … must request permission to access this host"*. Recognising a page
+you cannot read is worse than not recognising it, because the offer is already made by the time it
+fails. A test now pins the two lists against each other in both directions.
+
 Anything else — search results, message threads, settings — the popup declines and tells you which
 pages it handles. This is an allowlist rather than a blocklist on purpose: "any upwork.com URL"
 would quietly include pages holding other people's data. Adding a page type is a deliberate edit to
