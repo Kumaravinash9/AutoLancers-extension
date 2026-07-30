@@ -632,6 +632,32 @@ check("a wall sends its status", wallSent.page_status, "signed_out");
 check("with the reader's own words", wallSent.status_detail.startsWith("Not signed in"), true);
 check("and no page text, even with the AI on", wallSent.page_text, "");
 
+// --- the app configures the extension ---------------------------------------------------
+//
+// Why the options page can be hidden at all. The extension runs on Upwork's origin, where the app's
+// session cookie is never sent, so it cannot mint its own token — the app can, and hands it over. The
+// settings ride along, which is what stops hiding the page from switching a feature off: useLlm
+// decides whether the backend shapes a capture into the schema it stores, and a per-browser default of
+// false would turn that off for everyone who never opened the settings.
+console.log("\nthe app hands the extension its configuration:");
+{
+  // The shape the app sends, asserted here so a rename on either side fails loudly rather than
+  // silently storing nothing.
+  const sent = { type: "connect", apiUrl: "http://localhost:8010", token: "al_abc",
+                 settings: { pushToBackend: true, useLlm: true, concurrency: 1 } };
+  check("the handover names a backend and a token", [Boolean(sent.apiUrl), Boolean(sent.token)], [true, true]);
+  check("and carries the settings an admin set once", Object.keys(sent.settings).sort(),
+        ["concurrency", "pushToBackend", "useLlm"]);
+
+  // Only known keys are taken, so a future field in the app cannot write something nothing reads.
+  const bridge = readFileSync(new URL("../src/background/bridge.js", import.meta.url), "utf8");
+  const allowed = (bridge.match(/const allowed = \[(.*?)\]/) || [])[1] || "";
+  check("the bridge allowlists exactly those three",
+        allowed.split(",").map((x) => x.trim().replace(/"/g, "")).sort(),
+        ["concurrency", "pushToBackend", "useLlm"]);
+  check("a token is required for the handover to apply", /if \(!secret\) return \{ ok: false/.test(bridge), true);
+}
+
 await browser.close();
 console.log(failures ? `\n${failures} failing` : "\nall checks passed");
 process.exit(failures ? 1 : 0);

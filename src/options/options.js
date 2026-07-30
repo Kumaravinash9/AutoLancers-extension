@@ -3,6 +3,46 @@
 const DEFAULTS = { apiUrl: "http://localhost:8010", token: "" };
 const $ = (id) => document.getElementById(id);
 
+/**
+ * Settings are for whoever administers the deployment, not for whoever uses it.
+ *
+ * Nothing here is part of the product. The extension configures itself: the AutoLancers app hands it
+ * the backend address and a token over the bridge when you sign in, so there has never been a reason
+ * for an ordinary user to open this page — and every knob on it is one they could get wrong. Hiding
+ * `concurrency` in particular means nobody can raise it to 0, which is the value that got a browser
+ * flagged by Upwork's bot detection.
+ *
+ * **This is tidiness, not access control, and it must not be mistaken for it.** The page is reachable
+ * by URL, `chrome.storage` is editable from this extension's own devtools, and the source is on disk.
+ * Anyone determined can change any of these. If a setting ever needs to be genuinely restricted, the
+ * enforcement belongs on the backend — `require_admin` is already there for it — because that is the
+ * only side a client cannot talk its way around.
+ */
+async function isAdmin() {
+  const { apiUrl, token } = { ...DEFAULTS, ...(await chrome.storage.sync.get(Object.keys(DEFAULTS))) };
+  // No token means nobody has connected this browser yet, and the page is the only way to do it by
+  // hand — so it stays open. Locking the door before anyone has a key locks everyone out.
+  if (!token) return true;
+  try {
+    const response = await fetch(`${String(apiUrl).replace(/\/+$/, "")}/accounts/me`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    if (!response.ok) return false;
+    const me = await response.json();
+    return me?.role === "admin";
+  } catch {
+    // The backend is unreachable. Showing the settings is the useful failure: this page is where you
+    // fix a wrong address, and hiding it would make an unreachable backend unfixable.
+    return true;
+  }
+}
+
+// Both views start hidden, so neither flashes before the answer arrives. A settings page that
+// appears and then vanishes is worse than one that takes a moment.
+void isAdmin().then((admin) => {
+  $(admin ? "settings" : "locked").hidden = false;
+});
+
 chrome.storage.sync.get(Object.keys(DEFAULTS)).then((stored) => {
   const current = { ...DEFAULTS, ...stored };
   $("apiUrl").value = current.apiUrl;

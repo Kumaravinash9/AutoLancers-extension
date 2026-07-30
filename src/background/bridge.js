@@ -27,7 +27,56 @@
 const listeners = new Set();
 
 /** What the app is allowed to ask for, and nothing else. */
-const QUERIES = new Set(["ping", "state"]);
+const QUERIES = new Set(["ping", "state", "connect"]);
+
+/**
+ * Take the backend address and a token from the app.
+ *
+ * This is how the extension gets configured without anyone opening Settings. The app is already
+ * signed in — it holds a session cookie the extension cannot — so it can mint a token through
+ * `POST /accounts/tokens` and hand it over. Both run in the same browser, and the manifest's
+ * `externally_connectable` list decides who is allowed to speak here, so no other page can.
+ *
+ * That matters because it removes the only reason a non-admin needed the options page at all. Pasting
+ * a token by hand was the whole of it.
+ *
+ * Refused unless the token looks like one and the address is a real URL: a bad value stored here
+ * fails later, at collection time, as an authentication error that looks like the backend's fault.
+ */
+async function connect({ apiUrl, token, settings }) {
+  const url = String(apiUrl || "").trim().replace(/\/+$/, "");
+  const secret = String(token || "").trim();
+  if (!secret) return { ok: false, error: "No token in the handover." };
+  try {
+    new URL(url);
+  } catch {
+    return { ok: false, error: `Not a usable backend address: ${apiUrl}` };
+  }
+  await chrome.storage.sync.set({ apiUrl: url, token: secret });
+
+  /**
+   * The collection settings, when the app sends them.
+   *
+   * This is what keeps hiding the options page from switching a feature off. `useLlm` decides whether
+   * the backend shapes a capture into the schema it wants to store — so with the page hidden and the
+   * flag defaulting to false, nobody who is not an admin would ever get that, and the absence would
+   * look like the model simply not helping rather than a setting nobody could reach.
+   *
+   * Sent from the app, it is set once by whoever administers the deployment and inherited by every
+   * browser that connects. Only known keys are taken, so a future field in the app cannot quietly
+   * write something here that nothing reads.
+   */
+  const allowed = ["pushToBackend", "useLlm", "concurrency"];
+  const incoming = Object.fromEntries(
+    Object.entries(settings || {}).filter(([key]) => allowed.includes(key))
+  );
+  if (Object.keys(incoming).length) {
+    const { "collect.settings": stored = {} } = await chrome.storage.local.get("collect.settings");
+    await chrome.storage.local.set({ "collect.settings": { ...stored, ...incoming } });
+  }
+
+  return { ok: true, apiUrl: url, applied: Object.keys(incoming) };
+}
 
 /**
  * Announce something to every listening app tab.
@@ -60,6 +109,11 @@ export function openBridge({ state, version }) {
       // How the app knows the extension is installed at all. There is no other way to ask: a page
       // cannot enumerate extensions, and a failed sendMessage is indistinguishable from a wrong id.
       respond({ ok: true, version });
+      return true;
+    }
+
+    if (message.type === "connect") {
+      void connect(message).then(respond);
       return true;
     }
 

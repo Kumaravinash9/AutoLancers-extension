@@ -43,7 +43,31 @@
   <body>
     <header><span class="brand">Auto<span>Lancers</span></span></header>
 
-    <main>
+    <!--
+      Shown instead of the settings when the connected account is not an admin. Nothing on this page is
+      part of the product: the app hands the extension its backend address and token over the bridge
+      when you sign in, so an ordinary user has never needed to open it.
+
+      Tidiness, not access control — see the comment on `isAdmin` in options.js. The page is reachable
+      by URL and chrome.storage is editable from devtools, so this hides knobs rather than protecting
+      them. Anything that genuinely must be restricted belongs behind `require_admin` on the backend.
+    -->
+    <main id="locked" hidden>
+      <div class="row">
+        <p class="hint ok">This browser is already connected to AutoLancers.</p>
+        <p class="hint">
+          There is nothing to configure here. The extension gets its backend address and its token
+          from the AutoLancers app when you sign in, and everything else on this page is a deployment
+          setting rather than a preference.
+        </p>
+        <p class="hint">
+          Open the toolbar icon on an Upwork or PeoplePerHour page to read it, or use
+          <b>Collect my pages…</b> to gather several at once.
+        </p>
+      </div>
+    </main>
+
+    <main id="settings" hidden>
       <div class="row">
         <label for="apiUrl">Backend URL</label>
         <input id="apiUrl" type="url" placeholder="http://localhost:8010" />
