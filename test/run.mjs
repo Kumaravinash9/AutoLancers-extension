@@ -572,6 +572,8 @@ console.log("\noverlays are ignored, not clicked away:");
 console.log("\na lazily-rendered feed:");
 {
   await page.setContent(`<main id="list"></main><script>
+    // Wrapped for the same reason as the other feed fixture — see the note there.
+    (() => {
     let n = 0;
     const add = () => {
       const a = document.createElement("article");
@@ -581,6 +583,7 @@ console.log("\na lazily-rendered feed:");
     };
     for (let i = 0; i < 4; i++) add();
     const t = setInterval(() => { add(); if (n >= 12) clearInterval(t); }, 200);
+    })();
   </script>`);
 
   const out = await page.evaluate((code) => {
@@ -598,6 +601,73 @@ console.log("\na lazily-rendered feed:");
   check("and it reports that it settled rather than timed out", out.settled.settled, true);
   // Resolves as soon as it is quiet — it does not sit out the full timeout on every page.
   check("it stops as soon as the page stops", out.settled.waited < 6000, true);
+}
+
+// --- one scroll, and only one ------------------------------------------------------------
+//
+// Upwork holds most of the feed back until you scroll, so reading without scrolling reads a screenful
+// of a list with forty jobs in it. One scroll is what a person does on landing. Scrolling until the
+// feed stops giving is pagination — the thing worker.js refuses — and the only difference between the
+// two is a number, which is why `loadMoreOnce` is one statement and not a loop with a limit.
+console.log("\none scroll, and only one:");
+{
+  // A feed that renders 5, and appends 5 more every time it is scrolled to the bottom.
+  await page.setContent(`<main id="list"></main>
+    <div style="height:3000px"></div>
+    <script>
+      // Wrapped, because page.setContent does not reset the execution context: a top-level "let n"
+      // here is a redeclaration of the one in the other feed fixture, and a redeclaration is a
+      // SyntaxError that kills the whole script - leaving an empty list and a baffling zero. The
+      // extension readers hit this exact trap; see the namespace guard at the top of extract.js.
+      (() => {
+      let n = 0, scrolls = 0;
+      const add = () => {
+        const a = document.createElement("article");
+        a.innerHTML = '<a href="/jobs/~0219998887776665' + String(n).padStart(2,"0") + '">Job ' + n + '</a>' +
+          '<p>A description with enough prose in it to count as one for the reader, honestly it is.</p>';
+        document.getElementById("list").appendChild(a); n++;
+      };
+      for (let i = 0; i < 5; i++) add();
+      window.addEventListener("scroll", () => {
+        if (window.scrollY < 10) return;
+        scrolls++;
+        for (let i = 0; i < 5; i++) add();
+      }, { passive: true });
+      })();
+    </script>`);
+
+  const out = await page.evaluate((code) => {
+    Object.defineProperty(window, "__href", { value: "https://www.upwork.com/nx/find-work/best-matches", configurable: true });
+    Object.defineProperty(window, "__host", { value: "www.upwork.com", configurable: true });
+    eval(code);
+
+    // Count the scrolls *we* perform. Counting scroll events instead would measure the page's
+    // reaction — content shifting under a pinned viewport fires plenty of its own — rather than our
+    // behaviour, and our behaviour is the thing under test.
+    const scrolls = [];
+    const real = window.scrollTo.bind(window);
+    window.scrollTo = (...args) => {
+      scrolls.push(args);
+      return real(...args);
+    };
+
+    const before = globalThis.ALExtract.readList("best_matches").count;
+    return globalThis.ALExtract.loadMoreOnce().then((more) => ({
+      before,
+      more,
+      after: globalThis.ALExtract.readList("best_matches").count,
+      scrolls: scrolls.length,
+      // Restored: in click-through mode this is a tab the user is looking at.
+      restoredTo: window.scrollY,
+    }));
+  }, src.replace(/location\.href/g, "window.__href").replace(/location\.hostname/g, "window.__host"));
+
+  check("without scrolling, only the first batch", out.before, 5);
+  check("one scroll brings the next", out.after > out.before, true);
+  check("and it reports what the scroll bought", out.more.gained > 0, true);
+  // Exactly two: down once, then back. Not a loop that stops at one — see the note on loadMoreOnce.
+  check("it scrolls down once, and back once", out.scrolls, 2);
+  check("the page is put back where it was", out.restoredTo, 0);
 }
 
 // --- what gets sent to the backend ----------------------------------------------------

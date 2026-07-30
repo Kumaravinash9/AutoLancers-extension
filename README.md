@@ -266,10 +266,17 @@ How it behaves, and why:
   finished? — and resolves as soon as the answer is yes. On a feed that renders 4 then 8 more, that is
   the difference between 4 jobs and 12.
 
-  **It waits and nothing else.** No scrolling, no "load more", no next page. What you see further down
-  a real Upwork feed after scrolling is fetched *because* you scrolled, and fetching it here would be
-  pagination — the thing this refuses on purpose. If you want those jobs, scroll the page yourself
-  before pressing Collect: the reader takes whatever is in the DOM when it runs.
+- **Then it scrolls to the foot of the feed exactly once**, waits for whatever that brought, and puts
+  the page back where it was. Upwork holds most of the feed back until you ask, so reading without
+  scrolling reads a screenful of a list with forty jobs in it. One scroll is what a person does within
+  seconds of landing.
+
+  **Once is the point.** `loadMoreOnce` is a single statement rather than a loop with a limit of one,
+  so "just raise the cap" isn't a one-character change. Scrolling until the feed stops giving is
+  pagination — what the constraint below refuses — and the only difference between the two is a
+  number, which is exactly why the number shouldn't exist. A test asserts it scrolls down once and
+  back once. The scroll position is restored because in click-through mode that's a tab you're looking
+  at.
 - **It waits for each page to load** rather than sleeping a fixed interval. A sleep is wrong in both
   directions: too short and the reader runs against an empty DOM and reports zero with no error,
   too long and every run drags.

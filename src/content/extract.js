@@ -1079,6 +1079,38 @@ function awaitList({ stableFor = 900, timeoutMs = 12000 } = {}) {
 }
 
 /**
+ * Scroll to the foot of the feed **once**, wait for whatever that brought, and put the page back.
+ *
+ * Upwork holds most of the feed back until you scroll, so reading without scrolling reads about a
+ * screenful of a list that has forty jobs in it. One scroll is what a person does within seconds of
+ * landing on a feed, and it roughly doubles what the run sees.
+ *
+ * Once is the whole point, and it is written as one statement rather than a loop with a limit of one
+ * so that "just raise the cap" is not a one-character change. Scrolling until the feed stops giving is
+ * pagination — the thing the constraint at the top of `src/background/worker.js` refuses — and the
+ * difference between the two is only ever a number, which is exactly why the number should not exist.
+ *
+ * The position is restored afterwards. In click-through mode this runs in a tab the user has open and
+ * is looking at, and leaving their feed scrolled to the bottom is a visible side effect of something
+ * they asked to happen quietly.
+ */
+async function loadMoreOnce(options = {}) {
+  const platform = currentPlatform();
+  const selector = platform?.jobLink || 'a[href*="/jobs/"]';
+  const count = () => document.querySelectorAll(selector).length;
+
+  const before = { x: window.scrollX, y: window.scrollY };
+  const had = count();
+
+  window.scrollTo(0, document.documentElement.scrollHeight);
+  const settled = await awaitList(options);
+
+  // Restored even when nothing arrived: the scroll happened either way.
+  window.scrollTo(before.x, before.y);
+  return { had, got: settled.count, gained: settled.count - had, settled: settled.settled };
+}
+
+/**
  * Get to a page by clicking a link on the current one, the way a person would.
  *
  * Upwork is a single-page app: its own nav links are handled by the client router, so following one
@@ -1359,7 +1391,7 @@ function whichPage() {
   // link shapes and the tracking parameter bite, so it is worth pinning directly.
   return {
     readJob, readProfile, diagnose, readText, readList, clickTo, afterRouteChange, whichPage,
-    idFromUrl, canonicalJobUrl, sessionState, findOwnProfile, isOwnProfile, awaitList,
+    idFromUrl, canonicalJobUrl, sessionState, findOwnProfile, isOwnProfile, awaitList, loadMoreOnce,
     // Which reader each marketplace gets, and what it inherits. Exported for the tests: the point of
     // the hierarchy is that a subclass *narrows* the base rather than replacing it, and that is a
     // claim worth checking directly instead of inferring from a field's value.

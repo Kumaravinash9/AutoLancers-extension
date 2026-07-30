@@ -415,11 +415,16 @@ async function readProfileIn(tabId, page, platform) {
  * Never throws: a page that will not settle is still worth reading as far as it got.
  */
 async function settleList(tabId, page) {
-  if (page.reads !== "jobs") return;
+  if (page.reads !== "jobs") return null;
   try {
     await readInTab(tabId, () => globalThis.ALExtract.awaitList());
+    // Then one scroll, because Upwork holds most of the feed back until you ask. Once — see the note
+    // on `loadMoreOnce`; scrolling until it stops giving is pagination, and the only thing between
+    // the two is a number.
+    return await readInTab(tabId, () => globalThis.ALExtract.loadMoreOnce());
   } catch {
     // Injection failed or the tab moved. The read that follows reports the real error.
+    return null;
   }
 }
 
@@ -447,8 +452,9 @@ async function readOnePage(page, reuseTabId = null, platform = null) {
     }
     await waitForTab(tabId);
     if (page.reads === "profile") return await readProfileIn(tabId, page, platform);
-    await settleList(tabId, page);
-    return await readInTab(tabId, (key) => globalThis.ALExtract.readList(key), [page.key]);
+    const more = await settleList(tabId, page);
+    const read = await readInTab(tabId, (key) => globalThis.ALExtract.readList(key), [page.key]);
+    return more?.gained ? { ...read, gained_by_scrolling: more.gained } : read;
   } finally {
     // Only close what we own. A reused tab is closed once, by the caller, at the end of the run.
     if (reuseTabId === null && tabId !== null) {
@@ -492,11 +498,12 @@ async function readByClicking(pages, tabId, results, errors, pushes, platformId,
         await waitForTab(tabId);
       }
 
-      if (page.reads !== "profile") await settleList(tabId, page);
-      results[page.key] =
+      const more = page.reads === "profile" ? null : await settleList(tabId, page);
+      const read =
         page.reads === "profile"
           ? await readProfileIn(tabId, page, PLATFORMS[platformId] || null)
           : await readInTab(tabId, (key) => globalThis.ALExtract.readList(key), [page.key]);
+      results[page.key] = more?.gained ? { ...read, gained_by_scrolling: more.gained } : read;
       await filePage(page, results[page.key], platformId, pushes);
 
       const problem = sessionProblem(results[page.key]);
