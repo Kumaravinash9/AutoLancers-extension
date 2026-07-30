@@ -634,6 +634,10 @@ function readJob() {
       clean(document.title.replace(/\s*[-|]\s*(Upwork|PeoplePerHour|Fiverr).*$/i, "")),
     description: description.slice(0, 20000),
 
+    // The page's visible text, for the optional LLM reading. Only forwarded to the backend when the
+    // model is wanted (see api.js `withLlm`); the backend caps its length.
+    page_text: (pageText || "").slice(0, 200000),
+
     // The section fallback is the same one `readProfile` has always used successfully, and it is why
     // a PeoplePerHour job now reports its skills: the words under a "Skills" heading, when no
     // attribute marks them.
@@ -749,6 +753,14 @@ function readProfile() {
      * mine" and refuses, rather than picking the convenient answer.
      */
     is_own: isOwnProfile(),
+
+    // The account's stable marketplace id, parsed from the URL (Upwork's ~01… cipher id). The
+    // backend keys the connection on this, not the mutable handle — see /ingest/profile.
+    account_id: me.platform?.profileId?.(url) || null,
+
+    // The page's visible text, for the optional LLM reading. Only forwarded to the backend when the
+    // model is wanted (see api.js `withLlm`); the backend caps its length.
+    page_text: (me.text || "").slice(0, 200000),
 
     // Identity — itemprop survived every redesign so far; the title is the backstop.
     display_name: sel("profileName") || titled.name,

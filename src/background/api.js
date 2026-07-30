@@ -152,20 +152,33 @@ export async function pushPage(args) {
   if ((args.page?.reads || "jobs") === "profile") {
     const me = args.result?.profile;
     if (!me || me.error) throw new Error(me?.error || "The profile could not be read.");
-    const saved = await pushProfile(me);
+    const saved = await pushProfile(me, args.useLlm);
     return { stored: 1, created: 1, updated: 0, profile: true, skills: saved?.skills ?? 0 };
   }
   return post("/ingest/collection", collectionPayload(args));
 }
 
-/** A single job page, scored on arrival. Unchanged contract — the popup's Send button uses it. */
-export async function pushPosting(job) {
-  return post("/ingest/posting", job);
+/**
+ * Attach the LLM request to a single-page payload the same way `collectionPayload` does: the reader
+ * always carries `page_text`, but it is only forwarded when the model is wanted — otherwise it is a
+ * large field the backend would ignore. `is_llm_required` is a request, not an instruction; the
+ * backend still fills only what the selectors missed and reports whether it ran.
+ */
+function withLlm(data, useLlm) {
+  const { page_text, ...rest } = data || {};
+  return { ...rest, is_llm_required: Boolean(useLlm), page_text: useLlm ? page_text || "" : "" };
+}
+
+/** A single job page, scored on arrival. The popup's Send button uses it. */
+export async function pushPosting(job, useLlm) {
+  if (useLlm === undefined) ({ useLlm } = await pushSettings());
+  return post("/ingest/posting", withLlm(job, useLlm));
 }
 
 /** Your own profile, mirrored onto its profile row. */
-export async function pushProfile(profile) {
-  return post("/ingest/profile", profile);
+export async function pushProfile(profile, useLlm) {
+  if (useLlm === undefined) ({ useLlm } = await pushSettings());
+  return post("/ingest/profile", withLlm(profile, useLlm));
 }
 
 /**
