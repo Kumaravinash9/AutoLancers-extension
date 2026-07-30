@@ -1,0 +1,71 @@
+<!doctype html><html><head>
+<title>Priya R. - Full-Stack Developer - PeoplePerHour</title>
+<!--
+  A PeoplePerHour freelancer profile, on the generic anchors only.
+
+  Two things this covers that no other fixture does. First, `fromTitle()` is written for Upwork's
+  "Name - Tagline - Upwork Freelancer from City, Country" — here the third part is just the site name,
+  so the name and tagline must still come through while city and country correctly stay null rather
+  than being filled with "PeoplePerHour". Second, the account menu links a profile whose id is a
+  *slug* rather than a `~01…`, which is what `profileId` has to extract for the is-own comparison.
+
+  Shapes only: a copy of how these pages are put together, not a guarantee the live markup matches.
+-->
+</head><body>
+<header><nav>
+  <a href="/freelance-jobs">Browse jobs</a>
+  <a href="/freelancer/priya-r">Your profile</a>
+</nav></header>
+
+<main>
+  <h1 itemprop="name">Priya R.</h1>
+  <h2>Full-Stack Developer</h2>
+  <h3 itemprop="priceRange">£45.00/hr</h3>
+
+  <div itemprop="country-name">United Kingdom</div>
+  <div itemprop="locality">Manchester</div>
+
+  <p itemprop="description">
+    Nine years building reporting systems for logistics and fintech. I take the awkward integrations
+    nobody else wants and make them boring.
+  </p>
+
+  <div><span>Total earnings</span> <span>£82K</span></div>
+  <div><span>Total jobs</span> <span>134</span></div>
+  <div><span>Total hours</span> <span>2,410</span></div>
+  <div><span>reviews</span> <span>96</span></div>
+
+  <section>
+    <h2>Languages</h2>
+    <ul><li>English: Native</li><li>Hindi: Conversational</li></ul>
+  </section>
+
+  <section>
+    <h2>Skills</h2>
+    <span class="skill-token">Next.js</span>
+    <span class="skill-token">PostgreSQL</span>
+    <span class="skill-token">Django</span>
+  </section>
+
+  <section>
+    <h2>Portfolio</h2>
+    <a href="/freelancer/priya-r/portfolio/1" aria-label="Freight exception dashboard">
+      <img src="/img/p1.png" alt="" />
+    </a>
+    <a href="/freelancer/priya-r/portfolio/2" aria-label="Invoice reconciliation service">
+      <img src="/img/p2.png" alt="" />
+    </a>
+  </section>
+
+  <section>
+    <h2>Work history</h2>
+    <h4>Reporting dashboard for a freight operator</h4>
+    <h4>Stripe reconciliation rebuild</h4>
+  </section>
+
+  <section>
+    <h2>Education</h2>
+    <ul><li>BSc Computer Science, University of Manchester</li></ul>
+  </section>
+</main>
+</body></html>

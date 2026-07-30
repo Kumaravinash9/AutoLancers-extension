@@ -430,6 +430,84 @@ console.log("\nparked platform:");
   check("but no page is recognised as Fiverr", parked.recognised, null);
 }
 
+// --- PeoplePerHour, on the generic anchors only -----------------------------------------
+//
+// No `data-test`, no `air3-*`, and a `<title>` that is not Upwork's — so these exercise the path any
+// non-Upwork marketplace takes. Every value below was wrong or missing before the reader hierarchy
+// landed, and each one is a distinct failure worth naming.
+console.log("\nPeoplePerHour job page (generic anchors only):");
+{
+  const j = await readFrom(
+    "pph-job.html",
+    "https://www.peopleperhour.com/freelance-jobs/technology/build-a-nextjs-reporting-dashboard-4123456",
+    "readJob"
+  );
+  check("id from the slug's trailing number", j.external_id, "4123456");
+  check("title from JSON-LD", j.title, "Build a Next.js reporting dashboard");
+  check("posted_at from JSON-LD", j.posted_at, "2026-07-29T11:30:00Z");
+
+  // Was [null, null]: every budget selector is a data-test, so a site without them had no budget at
+  // all. The label fallback finds it — and must find only the money, not "Posted 4 hours ago" on the
+  // same innerText line, which briefly made this [4, 1200].
+  check("budget from the label, money only", [j.budget_min, j.budget_max], [1200, 1200]);
+  // Was "USD" with a null budget: a currency asserted about a figure never read.
+  check("currency is the one on the page", j.currency, "GBP");
+  // Was null: the type came from a data-test, then from a budget it never got.
+  check("work_type inferred without an attribute", j.work_type, "fixed");
+  // Was []: all three skill selectors were Upwork's. Now the "Skills" heading answers, as it always
+  // has for profiles.
+  check("skills from under the heading", j.skills, ["Next.js", "PostgreSQL", "TypeScript"]);
+  check("experience from its label", j.experience_level, "Intermediate");
+  // Was null on both platforms: nearLabel("Project Length|Duration") could never match.
+  check("project length, via a pattern that used to be dead", j.project_length, "1 to 3 months");
+  check("proposals", j.proposal_count, 7);
+  // Was 18400 — the total-spent figure two lines down, because the count precedes its label here.
+  check("client reviews, value before the label", j.client.reviews, 23);
+  check("client spend", j.client.total_spent, 18400);
+  check("payment verified", j.client.payment_verified, true);
+}
+
+console.log("\nPeoplePerHour profile (no per-site code at all):");
+{
+  const pr = await readFrom("pph-profile.html", "https://www.peopleperhour.com/freelancer/priya-r", "readProfile");
+  check("username is the slug", pr.username, "priya-r");
+  check("name from itemprop", pr.display_name, "Priya R.");
+  // The generic fromTitle takes the middle part; only Upwork's carries a location, so these must not
+  // be filled with "PeoplePerHour".
+  check("tagline from the title's middle part", pr.tagline, "Full-Stack Developer");
+  check("city and country from itemprop, not the title", [pr.city, pr.country], ["Manchester", "United Kingdom"]);
+  check("rate and its currency", [pr.hourly_rate, pr.currency], [45, "GBP"]);
+  check("earnings, K expanded", pr.total_earnings, 82000);
+  check("jobs and hours", [pr.total_jobs, pr.total_hours], [134, 2410]);
+  // Briefly 2410: a character window treated the hours on the line above as adjacent to "reviews".
+  check("reviews, not the hours on the line above", pr.total_reviews, 96);
+  check("skills without a token class of ours", pr.skills, ["Next.js", "PostgreSQL", "Django"]);
+  check("languages", pr.languages, ["English: Native", "Hindi: Conversational"]);
+  check("portfolio titles from aria-label", pr.portfolio.map((x) => x.title), ["Freight exception dashboard", "Invoice reconciliation service"]);
+  check("portfolio urls absolute", pr.portfolio[0].url, "https://www.peopleperhour.com/freelancer/priya-r/portfolio/1");
+  check("work history", pr.work_history.map((w) => w.title), ["Reporting dashboard for a freight operator", "Stripe reconciliation rebuild"]);
+  check("education", pr.education.map((e) => e.school), ["BSc Computer Science, University of Manchester"]);
+  check("its own profile, by slug", pr.is_own, true);
+}
+
+console.log("\nthe reader hierarchy:");
+{
+  const shape = await page.evaluate((code) => {
+    Object.defineProperty(window, "__href", { value: "https://www.upwork.com/", configurable: true });
+    eval(code);
+    return globalThis.ALExtract.readerShape();
+  }, src.replace(/location\.href/g, "window.__href"));
+  // One base holding the generic anchors, subclasses narrowing it. Upwork's data-test selectors are
+  // prepended to the generic list rather than replacing it, so a rename degrades to the fallback.
+  check("upwork uses its own reader", shape.upwork.name, "UpworkReader");
+  check("and keeps the generic selector as a fallback", shape.upwork.jobTitle.slice(-1), ["h1"]);
+  check("with its data-test first", shape.upwork.jobTitle[0], '[data-test="job-title"]');
+  check("peopleperhour needs almost nothing", shape.peopleperhour.name, "PeoplePerHourReader");
+  check("and inherits the generic job title", shape.peopleperhour.jobTitle, ["header h1", "h1"]);
+  // An unknown marketplace still reads, on the generic anchors — that is what makes the base useful.
+  check("an unknown site falls back to the base", shape.unknown.name, "Reader");
+}
+
 // --- what gets sent to the backend ----------------------------------------------------
 //
 // The payload is the contract between the two halves, so it is pinned here rather than left to be

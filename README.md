@@ -158,6 +158,33 @@ history is what tells you whether a bid is worth the connects.
 total earnings; rating, reviews, job success, total jobs, total hours; skills; and the repeating
 blocks: portfolio, work history with feedback, employment, education, certifications.
 
+### One base reader, narrowed per marketplace
+
+`src/content/extract.js` holds a `Reader` base class carrying the **generic** implementation —
+structured data, `itemprop`, headings, and the words next to a visible label — with a subclass per
+marketplace. A subclass exists for one of exactly two reasons:
+
+1. It knows a **better selector** than the base can guess at. Upwork's `data-test` attributes are the
+   whole of that, and they're *prepended* to the generic list rather than replacing it, so a rename
+   degrades to the fallback instead of to nothing.
+2. It needs a **different algorithm**. Upwork's `<title>` carries the tagline and location in a shape
+   no other site uses, so `fromTitle()` is overridden rather than parameterised.
+
+Anything that is neither belongs in the base, once. Every difficult bug in this file has been in
+site-neutral logic — walking a heading's section without swallowing the sidebar, telling prose from a
+label, canonicalising two URL shapes into one id — and three copies means fixing each of those three
+times. This repo has been bitten twice already by duplicated platform knowledge drifting apart.
+
+`PeoplePerHourReader` is deliberately almost empty, and that's a finding rather than an omission: the
+generic readers pull a **complete** PPH profile with no per-site entry at all. Its live markup hasn't
+been inspected from a terminal, so what it does add is label-anchored — inventing `data-test`-style
+names for a site nobody has looked at would be guessing dressed as knowledge.
+
+A class rather than a selector table because of reason 2: a table can't override an algorithm. All in
+**one file** because `executeScript({files})` evaluates classic scripts, so a subclass in another file
+couldn't see a base declared inside this closure — and a top-level `class` would hit the same
+redeclaration error that once killed the whole file on a second injection.
+
 Selectors are anchored on **headings and `itemprop`**, not class names. A diagnostics dump from a
 live profile settled this: every `data-test` attribute on the page marked navigation chrome, none
 marked content, there was no JSON-LD at all, and the structure was carried entirely by headings a
