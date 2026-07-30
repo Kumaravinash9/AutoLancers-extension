@@ -634,6 +634,10 @@ function readJob() {
       clean(document.title.replace(/\s*[-|]\s*(Upwork|PeoplePerHour|Fiverr).*$/i, "")),
     description: description.slice(0, 20000),
 
+    // The signed-in account this page was read under, so the backend attributes the job to that
+    // account's profile rather than whichever is selected. Null when the header link isn't found.
+    account_id: findOwnProfile()?.id || null,
+
     // The page's visible text, for the optional LLM reading. Only forwarded to the backend when the
     // model is wanted (see api.js `withLlm`); the backend caps its length.
     page_text: (pageText || "").slice(0, 200000),
@@ -1262,6 +1266,9 @@ function readList(key) {
     title: document.title,
     at: new Date().toISOString(),
     status: "ok",
+    // The signed-in account this page was read under, so the backend attributes the jobs to that
+    // account's profile rather than whichever is selected. Null when the header link isn't found.
+    account_id: findOwnProfile()?.id || null,
   };
 
   // Checked before any reader runs, so a wall can never be mistaken for an empty result.

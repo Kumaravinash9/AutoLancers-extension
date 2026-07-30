@@ -108,6 +108,9 @@ export function collectionPayload({ platform, page, result, useLlm, now = null }
 
   return {
     freelance_platform: result?.platform || platform || "unknown",
+    // The signed-in account the page was read under, so the backend attributes the jobs to that
+    // account's profile rather than the selected one. Null falls back to selected on the backend.
+    account_id: result?.account_id || null,
     page_key: page.key,
     page_label: page.label || "",
     reads,

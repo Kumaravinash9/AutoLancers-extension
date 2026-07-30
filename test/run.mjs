@@ -683,8 +683,8 @@ const scraped = { platform: "upwork", url: "https://www.upwork.com/nx/find-work/
 
 const sent = collectionPayload({ platform: "upwork", page: jobsPage, result: scraped, useLlm: false });
 check("named parameters the backend validates on", Object.keys(sent).sort(), [
-  "freelance_platform", "is_llm_required", "items", "page_key", "page_label", "page_status",
-  "page_text", "page_url", "reads", "scraped_at", "status_detail",
+  "account_id", "freelance_platform", "is_llm_required", "items", "page_key", "page_label",
+  "page_status", "page_text", "page_url", "reads", "scraped_at", "status_detail",
 ]);
 check("platform travels with the payload", sent.freelance_platform, "upwork");
 check("items come from the reader named by `reads`", sent.items.length, 2);
