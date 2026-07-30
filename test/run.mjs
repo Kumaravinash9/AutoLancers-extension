@@ -508,6 +508,59 @@ console.log("\nthe reader hierarchy:");
   check("an unknown site falls back to the base", shape.unknown.name, "Reader");
 }
 
+// --- cards sitting on top of the page ---------------------------------------------------
+//
+// A "Boost your profile" card open over a real profile advertised "Total earnings $250K" and "Total
+// jobs 999", and both won: the label readers scanned raw innerText, so the modal's marketing figures
+// beat the page's own 40K and 134. Section walking had always excluded overlays; the text readers
+// never did.
+//
+// Ignored rather than dismissed. Closing a card means clicking it, and a click on someone's account
+// is an action — it can accept cookies, silence a notification for good, or opt them into something.
+console.log("\noverlays are ignored, not clicked away:");
+{
+  const withModal = `
+    <header><nav><a href="/freelancers/~019abcdef123456789">Your profile</a></nav></header>
+    <div role="dialog" class="air3-modal">
+      <h2>Boost your profile</h2>
+      <p>Freelancers like you report Total earnings $250K after adding a video intro.</p>
+      <p>Total jobs 999</p><button>Not now</button>
+    </div>
+    <main>
+      <h1 itemprop="name">Avinash K.</h1><h3 itemprop="priceRange">$20.00/hr</h3>
+      <div>Total earnings</div><div>$40K</div>
+      <div>Total jobs</div><div>134</div>
+      <section><h4>Skills</h4><span class="air3-token">Python</span></section>
+    </main>`;
+  await page.setContent(withModal);
+  const read = await page.evaluate((code) => {
+    Object.defineProperty(window, "__href", { value: "https://www.upwork.com/freelancers/~019abcdef123456789", configurable: true });
+    eval(code);
+    const pr = globalThis.ALExtract.readProfile();
+    return { earnings: pr.total_earnings, jobs: pr.total_jobs, skills: pr.skills, name: pr.display_name };
+  }, src.replace(/location\.href/g, "window.__href"));
+
+  check("the page's earnings, not the modal's pitch", read.earnings, 40000);
+  check("the page's job count, not the modal's", read.jobs, 134);
+  check("and the real fields still read", [read.name, read.skills], ["Avinash K.", ["Python"]]);
+
+  // The overlay is left alone. Nothing was clicked, so the card is still there — which is the point:
+  // its presence must not change what we report, and dismissing it would change the user's account.
+  const stillThere = await page.evaluate(() => Boolean(document.querySelector("[role='dialog']")));
+  check("the card is still on the page afterwards", stillThere, true);
+
+  // And the deliberate exception: a login wall is usually *itself* a dialog, so sessionState must read
+  // the raw page. Stripping overlays there would hide the one thing it exists to find.
+  await page.setContent(`<div role="dialog"><h1>Log in to Upwork</h1><form><input type="password"/></form></div>`);
+  const session = await page.evaluate((code) => {
+    Object.defineProperty(window, "__href", { value: "https://www.upwork.com/nx/find-work/best-matches", configurable: true });
+    Object.defineProperty(window, "__host", { value: "www.upwork.com", configurable: true });
+    eval(code);
+    return globalThis.ALExtract.sessionState().status;
+  }, src.replace(/location\.href/g, "window.__href").replace(/location\.hostname/g, "window.__host"));
+  check("a login wall rendered as a dialog is still caught", session, "signed_out");
+}
+
 // --- what gets sent to the backend ----------------------------------------------------
 //
 // The payload is the contract between the two halves, so it is pinned here rather than left to be

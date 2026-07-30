@@ -62,14 +62,35 @@ function clean(text) {
 }
 
 /**
+ * The page's text with the furniture removed — what a person would say the page says.
+ *
+ * The label readers below scan the whole page, so anything floating on top of it is *in* their input.
+ * A "Boost your profile" card open over a real profile advertised "Total earnings $250K" and "Total
+ * jobs 999", and both won: the reader took the modal's marketing numbers over the page's own 40K and
+ * 134. Section walking had always excluded overlays; the text readers never did.
+ *
+ * Stripped rather than dismissed. Closing a card means clicking it, and a click on someone's account
+ * is an action — it can accept cookies, silence a notification for good, or opt them into something.
+ * Everything here reads; the single deliberate exception is `clickTo`, which navigates because that is
+ * what it is for. Ignoring an overlay costs nothing and changes nothing.
+ */
+function visibleText() {
+  const body = document.body;
+  if (!body) return "";
+  const copy = body.cloneNode(true);
+  for (const node of copy.querySelectorAll(`script, style, ${OVERLAY}`)) node.remove();
+  return copy.innerText || "";
+}
+
+/**
  * The text sitting next to a visible label.
  *
  * Upwork renders most statistics as a label/value pair with no stable attribute on either — "Total
  * earnings" above "$40K", "Job Success" beside "98%". Matching on the words a human reads survives
  * a class-name change, which is the most common kind of drift.
  */
-function nearLabel(label, { after = 120 } = {}) {
-  const body = document.body?.innerText || "";
+function nearLabel(label, { after = 120, text = null } = {}) {
+  const body = text ?? visibleText();
   // `label` is a pattern, not a literal. It used to be escaped here and *not* escaped two lines
   // below, so the two halves disagreed: the search looked for a literal "|" while the strip treated
   // it as alternation. Every call carrying a `|` or a `?` therefore found nothing and returned null,
@@ -94,8 +115,8 @@ function nearLabel(label, { after = 120 } = {}) {
  *
  * Requiring a currency symbol is what makes it adjacency-safe. "4 hours" has none.
  */
-function moneyNear(pattern, { after = 80 } = {}) {
-  const body = document.body?.innerText || "";
+function moneyNear(pattern, { after = 80, text = null } = {}) {
+  const body = text ?? visibleText();
   const at = body.search(new RegExp(pattern, "i"));
   if (at === -1) return null;
   const found = body
@@ -116,8 +137,8 @@ function moneyNear(pattern, { after = 80 } = {}) {
  * never matched anything, so the field had always been null. Repairing one bug is what exposed them,
  * which is the argument for the fixtures that caught them rather than for leaving it alone.
  */
-function numberNear(pattern, { lines = 2 } = {}) {
-  const body = document.body?.innerText || "";
+function numberNear(pattern, { lines = 2, text = null } = {}) {
+  const body = text ?? visibleText();
   const re = new RegExp(pattern, "i");
   const rows = body.split("\n");
   const index = rows.findIndex((row) => re.test(row));
@@ -363,11 +384,22 @@ class Reader {
   constructor(platform) {
     this.platform = platform;
     this._ld = null;
+    this._text = null;
   }
 
   /** JSON-LD, parsed once per read rather than on every field that wants it. */
   get structured() {
     return (this._ld ??= structuredData());
+  }
+
+  /**
+   * The page's text without its overlays, computed once per read.
+   *
+   * Once, because stripping means cloning the body and a profile makes twenty-five label reads — a
+   * clone each would be twenty-five copies of the whole document.
+   */
+  get text() {
+    return (this._text ??= visibleText());
   }
 
   /**
@@ -569,10 +601,11 @@ function readJob() {
 
   const me = reader();
   const sel = (name) => firstOf(me.sel(name));
-  const label = (name, opts) => (me.labels[name] ? nearLabel(me.labels[name], opts) : null);
+  const label = (name, opts) =>
+    me.labels[name] ? nearLabel(me.labels[name], { ...opts, text: me.text }) : null;
 
   const posting = me.structured.find((d) => d && /JobPosting/i.test(d["@type"] || "")) || {};
-  const pageText = document.body?.innerText || "";
+  const pageText = me.text;
 
   const description =
     clean((posting.description || "").replace(/<[^>]+>/g, " ")) || sel("jobDescription") || "";
@@ -582,7 +615,7 @@ function readJob() {
   // every budget field there came back null — while `currency` came back "USD", asserting a currency
   // about a figure that had never been read.
   const budgetText =
-    sel("jobBudget") || (me.labels.budget ? moneyNear(me.labels.budget) : null);
+    sel("jobBudget") || (me.labels.budget ? moneyNear(me.labels.budget, { text: me.text }) : null);
   const typeLabel = sel("jobType");
   const hourly = new RegExp(me.labels.hourlyWord, "i").test(typeLabel || pageText.slice(0, 4000));
   const [budgetMin, budgetMax] = toRange(budgetText);
@@ -641,9 +674,9 @@ function readJob() {
       country: sel("clientCountry"),
       city: sel("clientCity"),
       rating: toNumber(sel("clientRating")),
-      reviews: numberNear(me.labels.reviews),
-      total_spent: toNumber(sel("clientSpend") || moneyNear(me.labels.totalSpent)),
-      total_hires: numberNear(me.labels.hires),
+      reviews: numberNear(me.labels.reviews, { text: me.text }),
+      total_spent: toNumber(sel("clientSpend") || moneyNear(me.labels.totalSpent, { text: me.text })),
+      total_hires: numberNear(me.labels.hires, { text: me.text }),
       active_hires: toNumber(label("activeHires")),
       jobs_posted: toNumber(label("jobsPosted")),
       hire_rate: label("hireRate"),
@@ -687,7 +720,8 @@ function readProfile() {
 
   const me = reader();
   const sel = (name) => firstOf(me.sel(name));
-  const label = (name, opts) => (me.labels[name] ? nearLabel(me.labels[name], opts) : null);
+  const label = (name, opts) =>
+    me.labels[name] ? nearLabel(me.labels[name], { ...opts, text: me.text }) : null;
   const titled = me.fromTitle();
 
   // "$20.00/hr" is its own heading with nothing else identifying it, so match the shape.
@@ -737,11 +771,11 @@ function readProfile() {
     // Money
     hourly_rate: toNumber(rateText),
     currency: currencyOf(rateText),
-    total_earnings: toNumber(moneyNear(me.labels.totalEarnings) || label("totalEarnings")),
+    total_earnings: toNumber(moneyNear(me.labels.totalEarnings, { text: me.text }) || label("totalEarnings")),
 
     // Track record
     rating: toNumber(label("rating", { after: 30 })),
-    total_reviews: numberNear(me.labels.reviews),
+    total_reviews: numberNear(me.labels.reviews, { text: me.text }),
     job_success: toNumber(label("jobSuccess", { after: 30 })),
     total_jobs: toNumber(label("totalJobs")),
     total_hours: toNumber(label("totalHours")),
@@ -1095,6 +1129,10 @@ function afterRouteChange(previousUrl, timeoutMs = 15000) {
  */
 function sessionState() {
   const platform = currentPlatform();
+  // The *raw* text, deliberately — not the overlay-stripped view the field readers use. A login wall
+  // and a challenge notice are very often rendered as a dialog, which is exactly what that view
+  // removes. Stripping here would hide the one thing this function exists to find, and the failure
+  // would be silent: every page would read as "ok" while returning nothing.
   const text = (document.body?.innerText || "").slice(0, 4000);
 
   if (platform?.isLoginPage?.(location.href)) {

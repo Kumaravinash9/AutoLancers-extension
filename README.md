@@ -185,6 +185,24 @@ A class rather than a selector table because of reason 2: a table can't override
 couldn't see a base declared inside this closure — and a top-level `class` would hit the same
 redeclaration error that once killed the whole file on a second injection.
 
+### Cards sitting on top of the page
+
+A "Boost your profile" card open over a real profile advertised *"Total earnings $250K"* and
+*"Total jobs 999"* — and both won. The label readers scanned raw `innerText`, so the modal's marketing
+figures beat the page's own `$40K` and `134`. Section walking had always excluded overlays; the
+text-scanning readers never did. They now read one overlay-stripped view of the page, built once per
+read.
+
+They are **ignored, not dismissed.** Closing a card means clicking it, and a click on someone's
+account is an action — it can accept cookies, silence a notification permanently, or opt them into
+something. Everything here reads; the single deliberate exception is `clickTo`, which navigates
+because that is its job. A test asserts the card is still on the page afterwards.
+
+One deliberate exception in the other direction: `sessionState()` reads the **raw** page, because a
+login wall or a challenge notice is usually *itself* a dialog. Stripping overlays there would hide the
+one thing it exists to find, and the failure would be silent — every page would read as `ok` while
+returning nothing.
+
 Selectors are anchored on **headings and `itemprop`**, not class names. A diagnostics dump from a
 live profile settled this: every `data-test` attribute on the page marked navigation chrome, none
 marked content, there was no JSON-LD at all, and the structure was carried entirely by headings a
