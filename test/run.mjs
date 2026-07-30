@@ -561,6 +561,45 @@ console.log("\noverlays are ignored, not clicked away:");
   check("a login wall rendered as a dialog is still caught", session, "signed_out");
 }
 
+// --- a feed that arrives in pieces ------------------------------------------------------
+//
+// Upwork puts job cards on the page as they come. Reading a fixed moment after load caught whatever
+// had arrived by then — about a screenful — and the rest of the page's own first batch landed unread.
+// Waiting for the count to stop changing asks the question that matters: has the page finished?
+//
+// It waits and nothing else. No scrolling, no "load more", no next page — see the constraint at the
+// top of src/background/worker.js.
+console.log("\na lazily-rendered feed:");
+{
+  await page.setContent(`<main id="list"></main><script>
+    let n = 0;
+    const add = () => {
+      const a = document.createElement("article");
+      a.innerHTML = '<a href="/jobs/~0219998887776665' + String(n).padStart(2,"0") + '">Job ' + n + '</a>' +
+        '<p>A description with enough prose in it to be counted as one by the reader, honestly.</p>';
+      document.getElementById("list").appendChild(a); n++;
+    };
+    for (let i = 0; i < 4; i++) add();
+    const t = setInterval(() => { add(); if (n >= 12) clearInterval(t); }, 200);
+  </script>`);
+
+  const out = await page.evaluate((code) => {
+    Object.defineProperty(window, "__href", { value: "https://www.upwork.com/nx/find-work/best-matches", configurable: true });
+    Object.defineProperty(window, "__host", { value: "www.upwork.com", configurable: true });
+    eval(code);
+    const immediate = globalThis.ALExtract.readList("best_matches").count;
+    return globalThis.ALExtract
+      .awaitList()
+      .then((settled) => ({ immediate, settled, after: globalThis.ALExtract.readList("best_matches").count }));
+  }, src.replace(/location\.href/g, "window.__href").replace(/location\.hostname/g, "window.__host"));
+
+  check("reading mid-load undercounts", out.immediate, 4);
+  check("waiting for it to settle gets the rest", out.after, 12);
+  check("and it reports that it settled rather than timed out", out.settled.settled, true);
+  // Resolves as soon as it is quiet — it does not sit out the full timeout on every page.
+  check("it stops as soon as the page stops", out.settled.waited < 6000, true);
+}
+
 // --- what gets sent to the backend ----------------------------------------------------
 //
 // The payload is the contract between the two halves, so it is pinned here rather than left to be

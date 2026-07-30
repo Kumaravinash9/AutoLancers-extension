@@ -205,16 +205,18 @@ function renderScraped(data, kind) {
   // because you chose it — not because a selector quietly broke.
   $("ai").addEventListener("click", async () => {
     const { apiUrl, token } = await settings();
-    if (!token) {
-      $("ai").textContent = "Needs a token — see Settings";
-      return;
-    }
+    // No token needed. `/ingest/parse` stores nothing — it hands back what the model read so you can
+    // judge it before deciding to send anything — so it accepts an anonymous call while
+    // PARSE_REQUIRES_AUTH is off. A token is still sent when there is one, so the call is attributed.
     $("ai").textContent = "Reading…";
     try {
       const page = await readPage("readText");
       const response = await fetch(`${apiUrl}/ingest/parse`, {
         method: "POST",
-        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+        headers: {
+          "content-type": "application/json",
+          ...(token ? { authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({ kind, url: page.url, text: page.text }),
       });
       const body = await response.json();

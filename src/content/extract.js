@@ -1037,6 +1037,48 @@ function readMessageRooms(limit = 50) {
 }
 
 /**
+ * Wait for a lazily-rendered list to stop growing, then report how big it got.
+ *
+ * A fixed sleep was wrong in the way fixed sleeps always are. Upwork renders job cards as they come,
+ * so reading 2.5 seconds after `complete` caught whatever had arrived by then — about a screenful —
+ * and the rest of the page's own first batch landed unread a moment later. Too short and the reader
+ * undercounts; too long and every page in the run pays for the slowest one.
+ *
+ * Watching the count instead asks the question that actually matters: has the page finished putting
+ * things on the screen? It resolves as soon as the answer is yes.
+ *
+ * This waits. It does **not** scroll, click "load more", or request the next page — the run reads what
+ * the page chose to render on its own. That distinction is the whole of the constraint written at the
+ * top of `src/background/worker.js`, and it is the difference between a tool that read your page and
+ * one that walked the site for you.
+ */
+function awaitList({ stableFor = 900, timeoutMs = 12000 } = {}) {
+  const platform = currentPlatform();
+  const selector = platform?.jobLink || 'a[href*="/jobs/"]';
+
+  return new Promise((resolve) => {
+    const started = Date.now();
+    let last = -1;
+    let steady = 0;
+
+    const tick = () => {
+      const count = document.querySelectorAll(selector).length;
+      steady = count === last ? steady + 150 : 0;
+      last = count;
+
+      // Settled means it stopped changing, not that it passed some size: a genuinely quiet feed with
+      // three jobs is a correct answer, and a threshold would call it a failure forever.
+      if (steady >= stableFor) return resolve({ count, settled: true, waited: Date.now() - started });
+      if (Date.now() - started > timeoutMs) {
+        return resolve({ count, settled: false, waited: Date.now() - started });
+      }
+      setTimeout(tick, 150);
+    };
+    tick();
+  });
+}
+
+/**
  * Get to a page by clicking a link on the current one, the way a person would.
  *
  * Upwork is a single-page app: its own nav links are handled by the client router, so following one
@@ -1317,7 +1359,7 @@ function whichPage() {
   // link shapes and the tracking parameter bite, so it is worth pinning directly.
   return {
     readJob, readProfile, diagnose, readText, readList, clickTo, afterRouteChange, whichPage,
-    idFromUrl, canonicalJobUrl, sessionState, findOwnProfile, isOwnProfile,
+    idFromUrl, canonicalJobUrl, sessionState, findOwnProfile, isOwnProfile, awaitList,
     // Which reader each marketplace gets, and what it inherits. Exported for the tests: the point of
     // the hierarchy is that a subclass *narrows* the base rather than replacing it, and that is a
     // claim worth checking directly instead of inferring from a field's value.

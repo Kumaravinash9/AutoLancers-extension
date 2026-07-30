@@ -260,6 +260,16 @@ How it behaves, and why:
 - **One page at a time by default**, with a randomised 4–9 second pause. Roughly 76 seconds for
   eight pages. Setting `concurrency: 0` in Settings reads them all at once in about 4 seconds —
   measured, and it tripped Upwork's bot detection in practice (see below).
+- **It waits for the list to stop growing.** Upwork renders job cards as they arrive, so reading a
+  fixed moment after load caught about a screenful and the rest of the page's own first batch landed
+  unread. Waiting for the count to stop changing asks the question that matters — has the page
+  finished? — and resolves as soon as the answer is yes. On a feed that renders 4 then 8 more, that is
+  the difference between 4 jobs and 12.
+
+  **It waits and nothing else.** No scrolling, no "load more", no next page. What you see further down
+  a real Upwork feed after scrolling is fetched *because* you scrolled, and fetching it here would be
+  pagination — the thing this refuses on purpose. If you want those jobs, scroll the page yourself
+  before pressing Collect: the reader takes whatever is in the DOM when it runs.
 - **It waits for each page to load** rather than sleeping a fixed interval. A sleep is wrong in both
   directions: too short and the reader runs against an empty DOM and reports zero with no error,
   too long and every run drags.

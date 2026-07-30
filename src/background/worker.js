@@ -405,6 +405,25 @@ async function readProfileIn(tabId, page, platform) {
 }
 
 /**
+ * Give a lazily-rendered list time to finish arriving.
+ *
+ * Upwork puts job cards on the page as they come, so the fixed settle after `complete` caught about a
+ * screenful and the rest of the page's own first batch landed unread. This asks the page when it has
+ * stopped, rather than guessing.
+ *
+ * Waiting only. Nothing here scrolls or asks for more — see the constraint at the top of this file.
+ * Never throws: a page that will not settle is still worth reading as far as it got.
+ */
+async function settleList(tabId, page) {
+  if (page.reads !== "jobs") return;
+  try {
+    await readInTab(tabId, () => globalThis.ALExtract.awaitList());
+  } catch {
+    // Injection failed or the tab moved. The read that follows reports the real error.
+  }
+}
+
+/**
  * Read a page in a tab, reusing one if given.
  *
  * Sequentially there is no reason to open a tab per page: one tab navigated from URL to URL does
@@ -428,6 +447,7 @@ async function readOnePage(page, reuseTabId = null, platform = null) {
     }
     await waitForTab(tabId);
     if (page.reads === "profile") return await readProfileIn(tabId, page, platform);
+    await settleList(tabId, page);
     return await readInTab(tabId, (key) => globalThis.ALExtract.readList(key), [page.key]);
   } finally {
     // Only close what we own. A reused tab is closed once, by the caller, at the end of the run.
@@ -472,6 +492,7 @@ async function readByClicking(pages, tabId, results, errors, pushes, platformId,
         await waitForTab(tabId);
       }
 
+      if (page.reads !== "profile") await settleList(tabId, page);
       results[page.key] =
         page.reads === "profile"
           ? await readProfileIn(tabId, page, PLATFORMS[platformId] || null)
