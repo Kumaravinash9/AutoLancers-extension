@@ -200,7 +200,36 @@ async function publish(patch) {
   return next;
 }
 
-openBridge({ state: bridgeState, version: chrome.runtime.getManifest().version });
+/**
+ * What the app's "Sync" button runs: your own profile, then the job feeds.
+ *
+ * The profile first because it is what everything else is scored against — a board built before the
+ * profile is read is scored against whatever the row happened to hold. Rows pages and message rooms
+ * are excluded: they have no modelled table yet, and the button says profile and jobs.
+ */
+function syncKeys(platformId) {
+  return pagesFor(platformId)
+    .filter((p) => p.reads === "profile" || p.reads === "jobs")
+    .map((p) => p.key);
+}
+
+async function startSync(platformId) {
+  const { [STATE_KEY]: state = {} } = await chrome.storage.local.get(STATE_KEY);
+  // A second Sync while one is running would interleave two runs through the same tab.
+  if (state.running) return { ok: true, started: false, reason: "already_running" };
+
+  const keys = syncKeys(platformId);
+  if (!keys.length) return { ok: false, reason: "unknown_platform" };
+
+  void run(keys, platformId);
+  return { ok: true, started: true, pages: keys.length };
+}
+
+openBridge({
+  state: bridgeState,
+  version: chrome.runtime.getManifest().version,
+  start: startSync,
+});
 
 /**
  * File one finished page with the backend.

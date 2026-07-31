@@ -27,7 +27,7 @@
 const listeners = new Set();
 
 /** What the app is allowed to ask for, and nothing else. */
-const QUERIES = new Set(["ping", "state", "connect"]);
+const QUERIES = new Set(["ping", "state", "connect", "sync"]);
 
 /**
  * Take the backend address and a token from the app.
@@ -99,6 +99,38 @@ async function connect({ apiUrl, token, settings }) {
 }
 
 /**
+ * Start a run on the app's behalf, once the credential is known to work.
+ *
+ * There is nothing to *refresh* here, which is worth stating because the word invites a mechanism
+ * that does not exist: an API token has no expiry, only a `revoked_at`. It is live until someone
+ * revokes it. So the check is whether it still works — `/accounts/me` — and the three ways it can
+ * fail need three different sentences from the app, not one "sync failed".
+ *
+ * The extension deliberately has no login of its own. A page asking for your password is a different
+ * trust posture from one holding a revocable token, and the app can already mint one: when the token
+ * is missing or dead, the honest move is to say so and let the app re-mint, not to collect
+ * credentials here.
+ */
+async function sync({ platform = "upwork" } = {}, start) {
+  const { apiUrl, token } = await connection();
+  if (!token) return { ok: false, reason: "needs_token" };
+
+  try {
+    const response = await fetch(`${apiUrl}/accounts/me`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    // Revoked, or issued against a database that has since been reset. Either way the app has to
+    // mint another; the extension cannot.
+    if (response.status === 401) return { ok: false, reason: "revoked" };
+    if (!response.ok) return { ok: false, reason: "unreachable", status: response.status };
+  } catch {
+    return { ok: false, reason: "unreachable" };
+  }
+
+  return start(platform);
+}
+
+/**
  * Announce something to every listening app tab.
  *
  * Never throws. A tab that navigated away mid-post leaves a dead port whose `postMessage` raises, and
@@ -121,7 +153,7 @@ export function announce(event) {
  * and what do you know?" — which is what a freshly loaded page needs, since it has missed every event
  * that happened before it existed. A long-lived port carries what happens next.
  */
-export function openBridge({ state, version }) {
+export function openBridge({ state, version, start }) {
   chrome.runtime.onMessageExternal.addListener((message, _sender, respond) => {
     if (!QUERIES.has(message?.type)) return false;
 
@@ -134,6 +166,11 @@ export function openBridge({ state, version }) {
 
     if (message.type === "connect") {
       void connect(message).then(respond);
+      return true;
+    }
+
+    if (message.type === "sync") {
+      void sync(message, start).then(respond);
       return true;
     }
 
