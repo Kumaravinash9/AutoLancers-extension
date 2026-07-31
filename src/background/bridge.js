@@ -75,6 +75,26 @@ async function connect({ apiUrl, token, settings }) {
     await chrome.storage.local.set({ "collect.settings": { ...stored, ...incoming } });
   }
 
+  /**
+   * Show the user where the extension lives, now that it is connected.
+   *
+   * Opened by the extension rather than navigated to by the app, and that is not a stylistic choice:
+   * a web page cannot open a `chrome-extension://` URL at all unless the page is listed in
+   * `web_accessible_resources`, which would make it reachable by anything that guesses the id. The
+   * extension opening its own page needs no such exposure.
+   *
+   * It is also the only visible proof the handover worked. Everything else about this happens in
+   * storage the user cannot see, and "Connected." on a web page is a claim rather than evidence.
+   */
+  try {
+    // Promise in MV3, but not worth assuming — a callback-style return would make `.catch` throw
+    // right after a handover that actually succeeded.
+    await chrome.runtime.openOptionsPage();
+  } catch {
+    // Not fatal. The credentials are stored either way, and a tab that would not open is a poor
+    // reason to report a failure that did not happen.
+  }
+
   return { ok: true, apiUrl: url, applied: Object.keys(incoming) };
 }
 
