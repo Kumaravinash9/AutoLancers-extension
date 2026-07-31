@@ -509,22 +509,35 @@ async function readByClicking(pages, tabId, results, errors, pushes, platformId,
 
     await setState({ current: page.label });
     try {
-      const attempt = await readInTab(tabId, (fragment) => globalThis.ALExtract.clickTo(fragment), [page.link]);
+      // A profile page finds its own way in. `readProfileIn` discovers the link, follows it, and
+      // verifies at the destination — clicking here first would be a second, worse attempt at the
+      // same thing: `own_profile` declares `link: "/freelancers/"`, so `clickTo` would grab whatever
+      // freelancer link happened to be visible and then wait for a page it may never have wanted.
+      // That is what failed: the click landed somewhere heavy, `afterRouteChange` never saw it go
+      // quiet, and the throw meant `readProfileIn` never ran at all.
+      if (page.reads !== "profile") {
+        const attempt = await readInTab(tabId, (fragment) => globalThis.ALExtract.clickTo(fragment), [page.link]);
 
-      if (attempt?.already) {
-        // Nothing to navigate to; read where we stand.
-      } else if (attempt?.clicked) {
-        const settled = await readInTab(
-          tabId,
-          (previous) => globalThis.ALExtract.afterRouteChange(previous),
-          [attempt.before]
-        );
-        if (!settled?.ok) throw new Error("The page did not finish rendering after the click.");
-      } else {
-        // No link here — navigate this one directly, still in the same tab.
-        await chrome.tabs.update(tabId, { url: page.url });
-        await sleep(300);
-        await waitForTab(tabId);
+        if (attempt?.already) {
+          // Nothing to navigate to; read where we stand.
+        } else if (attempt?.clicked) {
+          const settled = await readInTab(
+            tabId,
+            (previous) => globalThis.ALExtract.afterRouteChange(previous),
+            [attempt.before]
+          );
+          // Arrived but still busy is not a failure. The URL moved and there is content, and the
+          // list reader waits for its own settling next — so pressing on reads a page that is still
+          // painting, while throwing loses it entirely. Only a click that went nowhere is fatal.
+          if (!settled?.ok && !settled?.moved) {
+            throw new Error("The click did not go anywhere — the page never changed.");
+          }
+        } else {
+          // No link here — navigate this one directly, still in the same tab.
+          await chrome.tabs.update(tabId, { url: page.url });
+          await sleep(300);
+          await waitForTab(tabId);
+        }
       }
 
       const more = page.reads === "profile" ? null : await settleList(tabId, page);

@@ -670,6 +670,54 @@ console.log("\none scroll, and only one:");
   check("the page is put back where it was", out.restoredTo, 0);
 }
 
+// --- getting to a page ------------------------------------------------------------------
+//
+// A run through a tab you already have open clicks the site's own nav rather than navigating by URL.
+// Two things went wrong there and both cost a whole page.
+console.log("\ngetting to a page:");
+{
+  // A route change that moves but never goes quiet. Upwork's profile is a heavy SPA — something on
+  // it keeps repainting — so requiring perfect stillness threw away a page that had arrived fine.
+  await page.setContent("<main id='m'>starting</main>");
+  const settled = await page.evaluate((code) => {
+    Object.defineProperty(window, "__href", { value: "https://www.upwork.com/after", configurable: true });
+    eval(code);
+    // Never stops changing, so the settle condition can never be met.
+    setInterval(() => (document.getElementById("m").textContent = String(Math.random())), 60);
+    return globalThis.ALExtract.afterRouteChange("https://www.upwork.com/before", 1200);
+  }, src.replace(/location\.href/g, "window.__href"));
+
+  check("a page that never settles reports not-ok", settled.ok, false);
+  // The distinction the caller needs: it *did* arrive. Throwing on this lost the page; the list
+  // reader waits for its own settling straight afterwards anyway.
+  check("but says it moved, which is what matters", settled.moved, true);
+  check("and that there is something on it", settled.length > 0, true);
+
+  const stuck = await page.evaluate((code) => {
+    Object.defineProperty(window, "__href", { value: "https://www.upwork.com/same", configurable: true });
+    eval(code);
+    return globalThis.ALExtract.afterRouteChange("https://www.upwork.com/same", 800);
+  }, src.replace(/location\.href/g, "window.__href"));
+  check("a click that went nowhere says so", [stuck.ok, stuck.moved], [false, false]);
+}
+
+{
+  // The second failure: `own_profile` declares link "/freelancers/", so the click-through path
+  // grabbed whatever freelancer link was visible and waited for a page it never wanted — and the
+  // throw meant the profile reader never ran. A profile page finds its own way in.
+  const worker = readFileSync(new URL("../src/background/worker.js", import.meta.url), "utf8");
+  // readByClicking sits between readOnePage and run — slicing to the wrong neighbour gives an empty
+  // string, which then "passes" every substring check by finding nothing anywhere.
+  const clicking = worker.slice(
+    worker.indexOf("async function readByClicking"),
+    worker.indexOf("async function run(")
+  );
+  check("the slice actually found the function", clicking.length > 200, true);
+  const guard = clicking.indexOf('if (page.reads !== "profile")');
+  check("the click-through path guards against profile pages", guard !== -1, true);
+  check("and the guard comes before the click", guard < clicking.indexOf("clickTo(fragment)"), true);
+}
+
 // --- what gets sent to the backend ----------------------------------------------------
 //
 // The payload is the contract between the two halves, so it is pinned here rather than left to be
