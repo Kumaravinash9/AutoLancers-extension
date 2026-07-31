@@ -25,7 +25,7 @@
  * and "a bot that watches the site", and it is the wrong side of it.
  */
 
-import { PUSH_DEFAULTS, connection, pushPage } from "./api.js";
+import { PUSH_DEFAULTS, connection, pushPage, pushPostings } from "./api.js";
 import { announce, openBridge } from "./bridge.js";
 
 const STATE_KEY = "collect.state";
@@ -680,16 +680,25 @@ async function finish(results, errors, pushes = {}, platformId = null, pages = [
     const { [STATE_KEY]: state = {} } = await chrome.storage.local.get(STATE_KEY);
     if (!state.cancelled) {
       await setState({ current: "Full descriptions", phase: "descriptions" });
-      const summary = await deepenDescriptions(results, lanes, async (done, total, live) => {
-        await setState({ descDone: done, descTotal: total, results: live });
-        await badge(`${done}/${total}`);
-      });
+      const { pushToBackend } = await autoSettings();
+      const { token } = await connection();
+      const fileAsWeGo = Boolean(pushToBackend && token);
+
+      const summary = await deepenDescriptions(
+        results,
+        lanes,
+        async (done, total, live) => {
+          await setState({ descDone: done, descTotal: total, results: live });
+          await badge(`${done}/${total}`);
+        },
+        fileAsWeGo
+      );
       await setState({ descSummary: summary });
 
-      // The pages were filed with the listing's truncated preview. Now that the whole brief is in
-      // hand, send them again — the upsert is on (platform, external_id), so this updates the rows
-      // already stored rather than making twins of them.
-      if (summary.deepened) {
+      // A backstop, not the delivery. Each batch was filed as it was read, so this only re-sends
+      // pages whose jobs were deepened but whose batch never made it — and the upsert is on
+      // (platform, external_id), so re-sending one already stored updates it rather than twinning it.
+      if (summary.deepened && !fileAsWeGo) {
         await setState({ current: "Filing full descriptions", phase: "refiling" });
         for (const page of pages) {
           if ((results[page.key]?.jobs || []).length) {
@@ -722,7 +731,7 @@ async function finish(results, errors, pushes = {}, platformId = null, pages = [
  * genuinely partial no matter how well it is parsed. This is the only way to the whole text, and it
  * costs one page load per job, which is why it is off unless asked for.
  */
-async function deepenDescriptions(results, lanes, onProgress) {
+async function deepenDescriptions(results, lanes, onProgress, fileAsWeGo = false) {
   const jobs = Object.values(results)
     .flatMap((page) => page?.jobs || [])
     .filter((job) => job?.url && !job.description_complete);
@@ -735,6 +744,33 @@ async function deepenDescriptions(results, lanes, onProgress) {
   const problems = {};
   let deepened = 0;
   let failed = 0;
+
+  /**
+   * Jobs read but not yet filed, flushed once there are enough of them.
+   *
+   * The pass reads one job per page load and used to hold every result until it had read them all —
+   * so a run stopped at job 28 of 31 filed nothing, having spent twenty-eight page loads for it.
+   * Flushing as it goes means what has been read stays read.
+   *
+   * Ten, because the cost being saved is round trips rather than bytes: smaller batches are more
+   * requests during a run that is already pacing itself, and larger ones put more work at risk of
+   * being lost to a cancel.
+   */
+  const BATCH = 10;
+  const pending = [];
+  let filed = 0;
+
+  async function flush(force = false) {
+    if (!pending.length || (!force && pending.length < BATCH)) return;
+    const batch = pending.splice(0, pending.length);
+    try {
+      const result = await pushPostings(batch);
+      filed += result?.stored ?? batch.length;
+    } catch {
+      // The descriptions are already written into `results`, so the end-of-run file still carries
+      // them. Losing a batch costs the head start, not the work.
+    }
+  }
 
   async function lane() {
     // One tab per lane, navigated job to job, closed when the lane runs dry.
@@ -771,6 +807,13 @@ async function deepenDescriptions(results, lanes, onProgress) {
             }
           }
           deepened += 1;
+
+          // Filed as it is read, not held to the end. `readJob` output is already the shape the
+          // batch endpoint takes.
+          if (fileAsWeGo) {
+            pending.push(result);
+            await flush();
+          }
         } else {
           failed += 1;
           problems[job.external_id] ||= "no result returned";
@@ -790,7 +833,9 @@ async function deepenDescriptions(results, lanes, onProgress) {
   }
 
   await Promise.all(Array.from({ length: Math.min(lanes, unique.length) }, () => lane()));
-  return { deepened, failed, problems };
+  // Whatever is left over, however few.
+  if (fileAsWeGo) await flush(true);
+  return { deepened, failed, filed, problems };
 }
 
 /**

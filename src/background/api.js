@@ -178,6 +178,26 @@ export async function pushPosting(job, useLlm) {
   return post("/ingest/posting", withLlm(job, useLlm));
 }
 
+/**
+ * A batch of job pages, each read on its own.
+ *
+ * The deep pass opens one job at a time and used to hold every result until it had read them all —
+ * so a run stopped at job 28 of 31 filed nothing, having spent twenty-eight page loads for it.
+ * Batching flushes the work as it is done, and what has been read stays read.
+ *
+ * A batch rather than one request per job because round trips are the only thing being saved: ten
+ * postings is one call and one commit either way, and thirty separate calls during a run that is
+ * already pacing itself is noise nobody needs.
+ *
+ * No `withLlm` here. These pages were read whole, from the job's own URL, so there is nothing left
+ * for a model to fill — and paying per job for a description already in hand is the one shape of
+ * that spend with no upside at all.
+ */
+export async function pushPostings(postings) {
+  if (!postings?.length) return { stored: 0, created: 0, updated: 0 };
+  return post("/ingest/postings", { postings });
+}
+
 /** Your own profile, mirrored onto its profile row. */
 export async function pushProfile(profile, useLlm) {
   if (useLlm === undefined) ({ useLlm } = await pushSettings());
