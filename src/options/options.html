@@ -64,6 +64,13 @@
           Open the toolbar icon on an Upwork or PeoplePerHour page to read it, or use
           <b>Collect my pages…</b> to gather several at once.
         </p>
+        <!--
+          A way out. This page is reachable from the toolbar menu and from a stray click, and without
+          a link back it is a cul-de-sac: it tells you there is nothing here and then leaves you here.
+          The href is filled in from the origin the app sent when it connected, since the extension
+          has no other way to know where the front end lives.
+        -->
+        <p class="hint"><a id="back" href="#" hidden>← Back to AutoLancers</a></p>
       </div>
     </main>
 

@@ -43,6 +43,20 @@ void isAdmin().then((admin) => {
   $(admin ? "settings" : "locked").hidden = false;
 });
 
+/**
+ * A way back to the app, when we know where it is.
+ *
+ * The extension learns the *backend* address at handover but never the front end's — they are
+ * different origins and only the app knows its own, so it sends it. Absent that, the link stays
+ * hidden rather than guessing at a URL that would 404.
+ */
+void chrome.storage.local.get("connection.app").then(({ "connection.app": appUrl }) => {
+  if (!appUrl) return;
+  const back = $("back");
+  back.href = `${appUrl}/profile`;
+  back.hidden = false;
+});
+
 chrome.storage.sync.get(Object.keys(DEFAULTS)).then((stored) => {
   const current = { ...DEFAULTS, ...stored };
   $("apiUrl").value = current.apiUrl;

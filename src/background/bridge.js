@@ -17,6 +17,8 @@
  * later, which is exactly the case the whole session-status idea exists for.
  */
 
+import { connection } from "./api.js";
+
 /**
  * Every app tab currently listening.
  *
@@ -25,6 +27,31 @@
  * precisely because a reconnecting page asks for the current state as its first act.
  */
 const listeners = new Set();
+
+/** Which user the stored credential belongs to. Local, not synced: it describes this browser. */
+const OWNER_KEY = "connection.owner";
+
+/** Where the app that connected us lives, so our own pages can offer a way back. */
+const APP_KEY = "connection.app";
+
+/**
+ * The `sub` inside a JWT, without verifying it.
+ *
+ * Verification is the backend's job and needs the signing key, which the extension does not have and
+ * should not. This only answers "whose token am I holding", and for that an unverified read is
+ * enough: a forged `sub` would fail at the backend on the very next request, so lying here buys
+ * nothing. Returns null for an opaque API token, which carries no claims at all.
+ */
+function subjectOf(token) {
+  try {
+    const [, payload] = String(token).split(".");
+    if (!payload) return null;
+    const json = atob(payload.replace(/-/g, "+").replace(/_/g, "/"));
+    return JSON.parse(json).sub || null;
+  } catch {
+    return null;
+  }
+}
 
 /** What the app is allowed to ask for, and nothing else. */
 const QUERIES = new Set(["ping", "state", "connect", "sync"]);
@@ -43,7 +70,7 @@ const QUERIES = new Set(["ping", "state", "connect", "sync"]);
  * Refused unless the token looks like one and the address is a real URL: a bad value stored here
  * fails later, at collection time, as an authentication error that looks like the backend's fault.
  */
-async function connect({ apiUrl, token, settings }) {
+async function connect({ apiUrl, token, settings, userId, appUrl }) {
   const url = String(apiUrl || "").trim().replace(/\/+$/, "");
   const secret = String(token || "").trim();
   if (!secret) return { ok: false, error: "No token in the handover." };
@@ -53,6 +80,26 @@ async function connect({ apiUrl, token, settings }) {
     return { ok: false, error: `Not a usable backend address: ${apiUrl}` };
   }
   await chrome.storage.sync.set({ apiUrl: url, token: secret });
+
+  /**
+   * Whose token this is.
+   *
+   * Stored because the extension holds exactly one credential and a browser can be used by more than
+   * one person. Without it, signing into the app as someone else left the extension holding the
+   * first user's token — and a sync would then file the second person's marketplace data into the
+   * first person's account, silently, behind a progress bar that said it was working.
+   *
+   * Taken from the token itself when the app does not say: an extension JWT carries `sub`, so the
+   * question "whose is this?" needs no network call and cannot disagree with the credential it
+   * describes.
+   */
+  await chrome.storage.local.set({
+    [OWNER_KEY]: userId || subjectOf(secret) || null,
+    // Where the app lives, so the extension's own pages can offer a way back to it. The extension
+    // knows the *backend* address from the handover but has no other way to learn the front end's —
+    // they are different origins and only the app knows its own.
+    ...(appUrl ? { [APP_KEY]: String(appUrl).replace(/\/+$/, "") } : {}),
+  });
 
   /**
    * The collection settings, when the app sends them.
@@ -75,25 +122,11 @@ async function connect({ apiUrl, token, settings }) {
     await chrome.storage.local.set({ "collect.settings": { ...stored, ...incoming } });
   }
 
-  /**
-   * Show the user where the extension lives, now that it is connected.
-   *
-   * Opened by the extension rather than navigated to by the app, and that is not a stylistic choice:
-   * a web page cannot open a `chrome-extension://` URL at all unless the page is listed in
-   * `web_accessible_resources`, which would make it reachable by anything that guesses the id. The
-   * extension opening its own page needs no such exposure.
-   *
-   * It is also the only visible proof the handover worked. Everything else about this happens in
-   * storage the user cannot see, and "Connected." on a web page is a claim rather than evidence.
-   */
-  try {
-    // Promise in MV3, but not worth assuming — a callback-style return would make `.catch` throw
-    // right after a handover that actually succeeded.
-    await chrome.runtime.openOptionsPage();
-  } catch {
-    // Not fatal. The credentials are stored either way, and a tab that would not open is a poor
-    // reason to report a failure that did not happen.
-  }
+  // Deliberately opens nothing. An earlier version popped the options page here as proof the
+  // handover had worked, and it was the wrong instinct: it took focus off the app at the exact
+  // moment the next thing to press was on it. The real evidence is the run itself — the app watches
+  // progress over the port, and a tab full of marketplace pages is harder to miss than a settings
+  // screen saying there is nothing to settle.
 
   return { ok: true, apiUrl: url, applied: Object.keys(incoming) };
 }
@@ -111,9 +144,19 @@ async function connect({ apiUrl, token, settings }) {
  * is missing or dead, the honest move is to say so and let the app re-mint, not to collect
  * credentials here.
  */
-async function sync({ platform = "upwork" } = {}, start) {
+async function sync({ platform = "upwork", userId } = {}, start) {
   const { apiUrl, token } = await connection();
   if (!token) return { ok: false, reason: "needs_token" };
+
+  // Whose token this is, against who is asking. The app knows who it is signed in as; the extension
+  // only knows who it was handed a credential for. Comparing the two is what stops a browser where a
+  // second person signed in from filing their jobs into the first person's account — a failure that
+  // produced no error at all, because from the backend's side the token was perfectly valid.
+  const { [OWNER_KEY]: owner } = await chrome.storage.local.get(OWNER_KEY);
+  const holder = owner || subjectOf(token);
+  if (userId && holder && userId !== holder) {
+    return { ok: false, reason: "different_user", holder };
+  }
 
   try {
     const response = await fetch(`${apiUrl}/accounts/me`, {

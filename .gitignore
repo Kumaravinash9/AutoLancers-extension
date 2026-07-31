@@ -4,3 +4,7 @@
 node_modules
 *.zip
 .DS_Store
+
+# Host page for test/bridge.mjs, written at run time so the extension's modules can be imported
+# over http — real module resolution is what makes a missing import fail there.
+test/.bridge-host.html
