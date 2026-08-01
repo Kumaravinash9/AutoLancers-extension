@@ -15,12 +15,6 @@
     "https://upwork.com/*",
     "https://www.peopleperhour.com/*",
     "https://peopleperhour.com/*"
-    // Fiverr is parked. Re-enabling it is these two lines plus `enabled: false` in the Fiverr entry
-    // of src/content/platforms.js and src/background/worker.js. All three move together: recognising
-    // a site Chrome will refuse to let us read is what produces "Cannot access contents of url",
-    // after the popup has already offered to read the page.
-    // "https://www.fiverr.com/*",
-    // "https://fiverr.com/*"
   ],
   "externally_connectable": {
     "matches": [

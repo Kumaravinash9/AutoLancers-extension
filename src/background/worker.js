@@ -53,6 +53,17 @@ const RENDER_WAIT_MS = 2500;
  */
 const DEFAULT_CONCURRENCY = 1;
 
+/**
+ * Whether the tabs a run opens are visible while it reads them.
+ *
+ * Off by default, for the reasons the tab-creation sites give: an inactive tab does not yank focus
+ * away mid-run, and one tab quietly browsing is a quieter pattern than tabs flashing open and shut.
+ * But "I could not see it work" is a real objection — a hidden run is indistinguishable from a
+ * broken one until the results land — so `showTab` lets a caller (the app's handover, or Settings)
+ * ask to watch. Set for the length of one run; runs never overlap, so a module-level flag is enough.
+ */
+let showTab = false;
+
 export const DEFAULT_KEYS = ["best_matches", "most_recent", "saved_jobs", "invites"];
 
 /**
@@ -477,10 +488,10 @@ async function readOnePage(page, reuseTabId = null, platform = null) {
   let tabId = reuseTabId;
   try {
     if (tabId === null) {
-      // Opened inactive so the collection doesn't yank focus away mid-run. A profile page may have no
-      // URL of its own — it is found from wherever we are — so fall back to the platform's own entry
-      // point for the tab to start from.
-      const tab = await chrome.tabs.create({ url: page.url || platform?.origins?.[0]?.replace(/\*$/, "") , active: false });
+      // Inactive unless the run asked to be watched: an inactive tab does not yank focus away
+      // mid-run. A profile page may have no URL of its own — it is found from wherever we are — so
+      // fall back to the platform's own entry point for the tab to start from.
+      const tab = await chrome.tabs.create({ url: page.url || platform?.origins?.[0]?.replace(/\*$/, "") , active: showTab });
       tabId = tab.id;
     } else if (page.url) {
       await chrome.tabs.update(tabId, { url: page.url });
@@ -601,7 +612,11 @@ async function run(selectedKeys, platformId = null) {
   const pushes = {};
   let finished = 0;
 
-  const { concurrency = DEFAULT_CONCURRENCY, navigateByClicking = true } = await autoSettings();
+  const settings = await autoSettings();
+  const { concurrency = DEFAULT_CONCURRENCY, navigateByClicking = true } = settings;
+  // Latched for the whole run — including the later description pass in `finish` — so every tab this
+  // run opens honours the one choice.
+  showTab = Boolean(settings.showTab);
 
   // Clicking needs a tab already on Upwork to start from, and only makes sense one page at a time.
   if (navigateByClicking && (Number(concurrency) || 1) === 1) {
@@ -633,7 +648,7 @@ async function run(selectedKeys, platformId = null) {
   // One lane means one tab for the whole run, reused. Several lanes each own their own.
   let sharedTabId = null;
   if (lanes === 1) {
-    const tab = await chrome.tabs.create({ url: "about:blank", active: false });
+    const tab = await chrome.tabs.create({ url: "about:blank", active: showTab });
     sharedTabId = tab.id;
   }
 
@@ -793,7 +808,7 @@ async function deepenDescriptions(results, lanes, onProgress, fileAsWeGo = false
       if (!job) return;
 
       if (tabId === null) {
-        const tab = await chrome.tabs.create({ url: job.url, active: false });
+        const tab = await chrome.tabs.create({ url: job.url, active: showTab });
         tabId = tab.id;
       } else {
         await chrome.tabs.update(tabId, { url: job.url });
@@ -873,6 +888,7 @@ async function autoSettings() {
   return {
     concurrency: DEFAULT_CONCURRENCY,
     fullDescriptions: false,
+    showTab: false,
     keys: DEFAULT_KEYS,
     ...PUSH_DEFAULTS,
     ...stored,

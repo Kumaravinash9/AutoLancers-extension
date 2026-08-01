@@ -697,9 +697,13 @@ console.log("\ngetting to a page:");
   const settled = await page.evaluate((code) => {
     Object.defineProperty(window, "__href", { value: "https://www.upwork.com/after", configurable: true });
     eval(code);
-    // Never stops changing, so the settle condition can never be met.
-    setInterval(() => (document.getElementById("m").textContent = String(Math.random())), 60);
-    return globalThis.ALExtract.afterRouteChange("https://www.upwork.com/before", 1200);
+    // Never stops changing — and specifically never stops changing *length*, which is what
+    // afterRouteChange actually compares. Randomising the text was not enough: String(Math.random())
+    // is usually the same number of characters twice running, so the page looked settled by accident
+    // and the case passed or failed with the dice.
+    let n = 0;
+    setInterval(() => (document.getElementById("m").textContent = "x".repeat(++n)), 50);
+    return globalThis.ALExtract.afterRouteChange("https://www.upwork.com/before", 1500);
   }, src.replace(/location\.href/g, "window.__href"));
 
   check("a page that never settles reports not-ok", settled.ok, false);
@@ -761,6 +765,29 @@ console.log("\nthe files the extension injects:");
   for (const file of fromPopup) {
     check(`${file} exists`, existsSync(new URL(`../${file}`, import.meta.url)), true);
   }
+}
+
+// --- asking which marketplace a tab is on -------------------------------------------------
+//
+// The popup asks the worker rather than reading the platform table itself, so it lists exactly the
+// pages the worker will visit. The cache in front of that question ignored its argument: the first
+// answer came back for every later call, whatever it was asked — so the picker, which needs a
+// *different* marketplace, had to bypass it and send its own message. Two routes to one question.
+console.log("\nthe popup's registry cache:");
+{
+  const popup = readFileSync(new URL("../src/popup/popup.js", import.meta.url), "utf8");
+
+  // Every lookup goes through the one function. A second route is how the two answers drift.
+  const direct = [...popup.matchAll(/sendMessage\(\{ type: "collect:pages"/g)].length;
+  check("only one place sends the question", direct, 1);
+  check("and it is inside the cache", /REGISTRIES\.set\([\s\S]{0,80}collect:pages/.test(popup), true);
+
+  // Keyed, so asking about a URL and asking for a named platform are different questions.
+  check("the cache is keyed by what was asked", /const key = platformId \? /.test(popup), true);
+
+  // The promise is cached rather than the result, so two callers in one tick share a message.
+  const body = popup.slice(popup.indexOf("async function registry("), popup.indexOf("const PAGE_KINDS"));
+  check("the promise is cached, not the awaited value", body.includes("await chrome.runtime"), false);
 }
 
 // --- what gets sent to the backend ----------------------------------------------------
@@ -846,17 +873,17 @@ console.log("\nthe app hands the extension its configuration:");
   // The shape the app sends, asserted here so a rename on either side fails loudly rather than
   // silently storing nothing.
   const sent = { type: "connect", apiUrl: "http://localhost:8010", token: "al_abc",
-                 settings: { pushToBackend: true, useLlm: true, concurrency: 1 } };
+                 settings: { pushToBackend: true, useLlm: true, concurrency: 1, showTab: true } };
   check("the handover names a backend and a token", [Boolean(sent.apiUrl), Boolean(sent.token)], [true, true]);
   check("and carries the settings an admin set once", Object.keys(sent.settings).sort(),
-        ["concurrency", "pushToBackend", "useLlm"]);
+        ["concurrency", "pushToBackend", "showTab", "useLlm"]);
 
   // Only known keys are taken, so a future field in the app cannot write something nothing reads.
   const bridge = readFileSync(new URL("../src/background/bridge.js", import.meta.url), "utf8");
   const allowed = (bridge.match(/const allowed = \[(.*?)\]/) || [])[1] || "";
-  check("the bridge allowlists exactly those three",
+  check("the bridge allowlists exactly the known keys",
         allowed.split(",").map((x) => x.trim().replace(/"/g, "")).sort(),
-        ["concurrency", "pushToBackend", "useLlm"]);
+        ["concurrency", "pushToBackend", "showTab", "useLlm"]);
   check("a token is required for the handover to apply", /if \(!secret\) return \{ ok: false/.test(bridge), true);
 }
 

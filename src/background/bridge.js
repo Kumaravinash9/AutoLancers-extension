@@ -113,7 +113,7 @@ async function connect({ apiUrl, token, settings, userId, appUrl }) {
    * browser that connects. Only known keys are taken, so a future field in the app cannot quietly
    * write something here that nothing reads.
    */
-  const allowed = ["pushToBackend", "useLlm", "concurrency"];
+  const allowed = ["pushToBackend", "useLlm", "concurrency", "showTab"];
   const incoming = Object.fromEntries(
     Object.entries(settings || {}).filter(([key]) => allowed.includes(key))
   );

@@ -309,11 +309,35 @@ const STATE_KEY = "collect.state";
  */
 const DEFAULT_ON = /(own_profile|pph_profile|best_matches|most_recent|saved_jobs|invites|pph_feed|fvr_briefs)/;
 
-let REGISTRY = null;
+/**
+ * Answers already asked for, keyed by what was asked.
+ *
+ * One entry per question rather than one for the whole popup. The single slot it replaces ignored its
+ * argument entirely — the first answer was returned for every later call, whatever URL or platform it
+ * was given — so the one caller that genuinely needed a different marketplace had to go around the
+ * cache and send its own message. Two routes to the same question is how they end up disagreeing.
+ *
+ * The **promise** is cached, not the result, so callers landing in the same tick share one message
+ * rather than each starting their own. A popup opened and driven quickly — pick a marketplace, start,
+ * reopen, pick another — asks each distinct question once and no question twice.
+ */
+const REGISTRIES = new Map();
 
-async function registry(url) {
-  if (!REGISTRY) REGISTRY = await chrome.runtime.sendMessage({ type: "collect:pages", url });
-  return REGISTRY;
+/**
+ * Which marketplace a tab is on and what can be collected there, from the worker's own table.
+ *
+ * Asked of the worker rather than read from `platforms.js` here, because the worker's copy is the one
+ * a collection actually navigates with — so the popup lists exactly the pages the worker will visit.
+ *
+ * Answer one of two ways: by URL, meaning "what site is this tab on", or by `platformId`, meaning
+ * "give me this named marketplace" — which is what the picker uses when you are not on one.
+ */
+async function registry({ url = null, platformId = null } = {}) {
+  const key = platformId ? `platform:${platformId}` : `url:${url ?? ""}`;
+  if (!REGISTRIES.has(key)) {
+    REGISTRIES.set(key, chrome.runtime.sendMessage({ type: "collect:pages", url, platformId }));
+  }
+  return REGISTRIES.get(key);
 }
 
 const PAGE_KINDS = [
@@ -329,9 +353,7 @@ const PAGE_KINDS = [
  */
 async function renderCollect(forPlatform = null) {
   const tab = await activeTab();
-  const reg = forPlatform
-    ? await chrome.runtime.sendMessage({ type: "collect:pages", platformId: forPlatform })
-    : await registry(tab?.url);
+  const reg = await registry(forPlatform ? { platformId: forPlatform } : { url: tab?.url });
   const { pages, platform, label } = reg;
   const { [STATE_KEY]: state = {} } = await chrome.storage.local.get(STATE_KEY);
   const { "collect.settings": collectSettings = {} } =
@@ -525,13 +547,13 @@ async function start() {
 
   if (running.running) {
     // A collection in flight is the most important thing on screen; the page reader can wait.
-    const { pages } = await registry(tab?.url);
+    const { pages } = await registry({ url: tab?.url });
     main.innerHTML = '<div id="progress"></div>';
     void watch(pages);
     return;
   }
 
-  const reg = await registry(tab?.url);
+  const reg = await registry({ url: tab?.url });
 
   if (!reg.platform) {
     // Off a supported site the page readers have nothing to read, but a collection still can —

@@ -76,6 +76,7 @@ chrome.storage.local.get(COLLECT_KEY).then(({ [COLLECT_KEY]: stored = {} }) => {
   $("concurrency").value = stored.concurrency ?? 1;
   $("pushToBackend").checked = Boolean(current.pushToBackend);
   $("useLlm").checked = Boolean(current.useLlm);
+  $("showTab").checked = Boolean(stored.showTab);
 });
 
 $("save").addEventListener("click", async () => {
@@ -90,6 +91,7 @@ $("save").addEventListener("click", async () => {
       concurrency: Math.min(8, Math.max(0, Number($("concurrency").value) || 0)),
       pushToBackend: $("pushToBackend").checked,
       useLlm: $("useLlm").checked,
+      showTab: $("showTab").checked,
     },
   });
 
