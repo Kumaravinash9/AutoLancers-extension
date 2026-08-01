@@ -31,7 +31,16 @@ async function readPage(fn) {
   const tab = await activeTab();
   const injected = await chrome.scripting.executeScript({
     target: { tabId: tab.id },
-    files: ["src/content/platforms.js", "src/content/extract.js"],
+    files: [
+      "src/content/platforms.js",
+      "src/content/extract.js",
+      // Order matters: base publishes the class the platform files extend, and extract.js
+      // publishes the helpers base needs.
+      "src/content/readers/base.js",
+      "src/content/readers/upwork.js",
+      "src/content/readers/peopleperhour.js",
+      "src/content/readers/fiverr.js",
+    ],
   });
   const injectError = injected.find((frame) => frame.error)?.error;
   if (injectError) throw new Error(`Couldn't load the readers: ${injectError}`);
@@ -251,6 +260,14 @@ function renderScraped(data, kind) {
 async function offerSend(data, kind) {
   const { token } = await settings();
   if (!token) return;
+
+  // Single-job send (/ingest/ondemand/job-posting) is disabled for now — it conflicts with the
+  // collect flow. Remove this guard to re-enable it; pushPosting and the endpoint are untouched.
+  if (kind === "job") {
+    $("send").innerHTML =
+      '<p class="small">Sending a single job is off for now — use <b>Collect</b> instead.</p>';
+    return;
+  }
 
   $("send").innerHTML = '<button id="push" class="ghost">Send to AutoLancers</button>';
   $("push").addEventListener("click", async () => {

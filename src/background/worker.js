@@ -339,7 +339,16 @@ async function waitForTab(tabId) {
 async function readInTab(tabId, func, args = []) {
   const injected = await chrome.scripting.executeScript({
     target: { tabId },
-    files: ["src/content/platforms.js", "src/content/extract.js"],
+    files: [
+      "src/content/platforms.js",
+      "src/content/extract.js",
+      // Order matters: base publishes the class the platform files extend, and extract.js
+      // publishes the helpers base needs.
+      "src/content/readers/base.js",
+      "src/content/readers/upwork.js",
+      "src/content/readers/peopleperhour.js",
+      "src/content/readers/fiverr.js",
+    ],
   });
   const injectError = injected.find((frame) => frame.error)?.error;
   if (injectError) throw new Error(`Injecting the readers failed: ${injectError}`);

@@ -158,7 +158,7 @@ history is what tells you whether a bid is worth the connects.
 total earnings; rating, reviews, job success, total jobs, total hours; skills; and the repeating
 blocks: portfolio, work history with feedback, employment, education, certifications.
 
-### One base reader, narrowed per marketplace
+### One base reader, one file per marketplace
 
 `src/content/extract.js` holds a `Reader` base class carrying the **generic** implementation —
 structured data, `itemprop`, headings, and the words next to a visible label — with a subclass per
@@ -180,10 +180,26 @@ generic readers pull a **complete** PPH profile with no per-site entry at all. I
 been inspected from a terminal, so what it does add is label-anchored — inventing `data-test`-style
 names for a site nobody has looked at would be guessing dressed as knowledge.
 
-A class rather than a selector table because of reason 2: a table can't override an algorithm. All in
-**one file** because `executeScript({files})` evaluates classic scripts, so a subclass in another file
-couldn't see a base declared inside this closure — and a top-level `class` would hit the same
-redeclaration error that once killed the whole file on a second injection.
+A class rather than a selector table because of reason 2: a table can't override an algorithm.
+
+```
+src/content/
+  extract.js              the readers themselves, and the machinery for walking a DOM
+  readers/base.js         the generic Reader, plus the registry
+  readers/upwork.js       data-test selectors, and a <title> only Upwork writes
+  readers/peopleperhour.js  almost nothing, on purpose
+  readers/fiverr.js       empty, parked
+```
+
+`executeScript({files})` evaluates classic scripts in order, each with its own top-level scope, so a
+subclass in one file can't see a class declared inside a closure in another. The registry bridges
+that: `base.js` publishes `Reader` and a `register` function on `globalThis`, each platform file
+registers itself against its id, and `extract.js` asks for the one matching the page. Adding a
+marketplace is a file plus a line in the injection list.
+
+That list lives in two callers and is checked by a test — the order is the contract (`extract.js`
+publishes the helpers `base.js` needs; `base.js` publishes the class the platform files extend), and
+a path that doesn't exist otherwise fails at click time on a marketplace page.
 
 ### Cards sitting on top of the page
 

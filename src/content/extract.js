@@ -349,233 +349,19 @@ function headingLike(regex) {
   return null;
 }
 
-// --- what differs per marketplace ----------------------------------------------------
+// --- which reader reads this page ----------------------------------------------------
 
 /**
- * The generic reader. Everything a page might be asked for, anchored on nothing site-specific.
+ * The shared helpers the reader classes need, published for the files that hold them.
  *
- * This class is the honest version of what the readers already were: structured data, `itemprop`,
- * headings, and the words next to a visible label. Those travel — the same `readJobCards` pulls ids,
- * titles and budgets off PeoplePerHour's feed as off Upwork's, with no per-site code — which is why
- * the base is the *generic* implementation and each marketplace narrows it, rather than each
- * marketplace owning a copy.
+ * Three of them, out of the thousand-odd lines here. That ratio is the argument for the split being
+ * where it is: the readers live in their own files because each marketplace's DOM is its own problem,
+ * while the machinery for walking a DOM is not per-marketplace at all and stays put.
  *
- * A subclass exists for one of two reasons and no others:
- *
- *   1. It knows a **better selector** for a field the base can only guess at. Upwork's `data-test`
- *      attributes are the whole of that: prepended to the generic list, so both still work and the
- *      generic one is what catches a redesign.
- *   2. It needs a **different algorithm**. Upwork's `<title>` carries the tagline in a shape no other
- *      site uses, so `fromTitle` is overridden rather than parameterised. If a marketplace ever ships
- *      its jobs as JSON in a script tag, `readJobCards` is what it should replace — DOM-walking is
- *      the wrong approach for that page and no amount of selector tuning fixes it.
- *
- * Anything that is neither of those belongs in the base, once. Every difficult bug in this file has
- * been in site-neutral logic — walking a heading's section without swallowing the sidebar, telling
- * prose from a label, canonicalising two URL shapes into one id — and three copies of that means
- * fixing each of those three times. This codebase has already been bitten twice by duplicated
- * platform knowledge drifting apart.
- *
- * A class rather than a table of selectors because of reason 2: a table cannot override an algorithm.
- * All in one file because `executeScript({files})` evaluates classic scripts, so a subclass in another
- * file could not see a base declared inside this closure.
+ * Published before `readers/*.js` are evaluated — `executeScript({files})` runs them in the order
+ * given, and the injection lists in `popup.js` and `worker.js` put this file first.
  */
-class Reader {
-  constructor(platform) {
-    this.platform = platform;
-    this._ld = null;
-    this._text = null;
-  }
-
-  /** JSON-LD, parsed once per read rather than on every field that wants it. */
-  get structured() {
-    return (this._ld ??= structuredData());
-  }
-
-  /**
-   * The page's text without its overlays, computed once per read.
-   *
-   * Once, because stripping means cloning the body and a profile makes twenty-five label reads — a
-   * clone each would be twenty-five copies of the whole document.
-   */
-  get text() {
-    return (this._text ??= visibleText());
-  }
-
-  /**
-   * Selector lists, tried in order. A subclass prepends its own and keeps these as the fallback.
-   *
-   * Generic on purpose: `itemprop` is machine-readable and survives redesigns, and a heading is what
-   * a human reads. Neither is any one marketplace's private convention.
-   */
-  get selectors() {
-    return {
-      jobTitle: ["header h1", "h1"],
-      jobDescription: ["section[aria-labelledby*='description']", "[itemprop='description']"],
-      jobBudget: [],
-      jobType: [],
-      jobSkills: [],
-      jobCategory: [],
-      jobProposals: [],
-      clientCountry: [],
-      clientCity: [],
-      clientRating: [],
-      clientSpend: [],
-      clientMemberSince: [],
-      clientIndustry: [],
-      profileRate: ["[itemprop='priceRange']"],
-      profileSummary: ["[itemprop='description']"],
-      profileName: ["[itemprop='name']"],
-      profileCountry: ["[itemprop='country-name']"],
-      profileCity: ["[itemprop='locality']"],
-      // Both marketplaces mark a skill chip with *some* class containing "token" or "skill". Matching
-      // the substring rather than the exact name is what let PeoplePerHour work with no entry here.
-      skillToken: "[class*='token'], [class*='skill']",
-    };
-  }
-
-  /**
-   * Label patterns for the `nearLabel` reader. Real regex sources — alternation is the point of them.
-   *
-   * These are regexes, not literals: `nearLabel` used to escape its argument on the way in and not on
-   * the way out, so every pattern carrying a `|` or a `?` silently matched nothing. Ten of them did.
-   */
-  get labels() {
-    return {
-      experience: "Experience Level",
-      duration: "Project Length|Duration",
-      hoursPerWeek: "Hourly|hrs/week",
-      connects: "Connects required|Send a proposal for",
-      posted: "Posted",
-      interviewing: "Interviewing",
-      invitesSent: "Invites sent",
-      unansweredInvites: "Unanswered invites",
-      lastViewed: "Last viewed by client",
-      totalSpent: "total spent",
-      hires: "hires?",
-      activeHires: "active",
-      jobsPosted: "jobs posted",
-      hireRate: "hire rate",
-      avgHourly: "/hr avg hourly rate paid",
-      memberSince: "Member since",
-      companySize: "employees|company size",
-      reviews: "reviews?",
-      timezone: "local time|Timezone",
-      availability: "Availability|hrs/week",
-      jobSuccess: "Job Success",
-      rating: "Job Success|rating",
-      totalEarnings: "Total earnings",
-      totalJobs: "Total jobs",
-      totalHours: "Total hours",
-      // What a fixed-price page says when it is not hourly. Read from the page text, because the two
-      // words are the only thing distinguishing the type on a site with no attribute for it.
-      hourlyWord: "hourly|per hour|/hr",
-    };
-  }
-
-  sel(name) {
-    const value = this.selectors[name];
-    return Array.isArray(value) ? value : [value].filter(Boolean);
-  }
-
-  /** The name, tagline and location a page's `<title>` carries. Generic: it carries none. */
-  fromTitle() {
-    const parts = clean(document.title).split(/\s+-\s+/);
-    return {
-      name: parts[0] || null,
-      // "Name - Tagline - Site" is common enough to be worth the guess; the last part is the site.
-      tagline: parts.length > 2 ? parts[1] : null,
-      city: null,
-      country: null,
-    };
-  }
-}
-
-/**
- * Upwork, whose markup was the reason every generic fallback in the base exists.
- *
- * A diagnostics dump from a live profile settled the approach: every `data-test` attribute on the page
- * marked navigation chrome rather than content, and the structure was carried entirely by headings.
- * The `data-test` names below are the ones that *do* mark content, on job pages where they exist —
- * prepended to the generic lists, never replacing them, so a rename degrades to the fallback instead
- * of to nothing.
- */
-class UpworkReader extends Reader {
-  get selectors() {
-    const base = super.selectors;
-    return {
-      ...base,
-      jobTitle: ['[data-test="job-title"]', ...base.jobTitle],
-      jobDescription: ['[data-test="job-description-text"]', '[data-test="Description"]', ...base.jobDescription],
-      jobBudget: ['[data-test="BudgetAmount"]', '[data-test="budget"]', '[data-test="job-type-label"] + div'],
-      jobType: ['[data-test="job-type-label"]', '[data-test="job-type"]'],
-      jobSkills: ['[data-test="token"] span', '[data-test="skills"] a', 'a[href*="/nx/search/jobs/?q="]'],
-      jobCategory: ['[data-test="category"]', '[data-test="job-category"]'],
-      jobProposals: ['[data-test="proposals-tier"]', '[data-test="ClientActivity"] li'],
-      jobExperience: ['[data-test="expertise"]', '[data-test="contractor-tier"]'],
-      jobDuration: ['[data-test="duration"]'],
-      clientCountry: ['[data-test="client-country"]', '[data-test="LocationLabel"]'],
-      clientCity: ['[data-test="client-city"]'],
-      clientRating: ['[data-test="buyer-rating"]', '[data-test="client-rating"]'],
-      clientSpend: ['[data-test="client-spend"]'],
-      clientMemberSince: ['[data-test="client-contract-date"]'],
-      clientIndustry: ['[data-test="client-industry"]'],
-      profileSummary: ["[itemprop='description']", '[data-cy="about-me-section"] p'],
-      skillToken: ".air3-token, " + base.skillToken,
-    };
-  }
-
-  /**
-   * "Name - Tagline - Upwork Freelancer from City, Country".
-   *
-   * Written for search engines, so it outlives redesigns that move every element on the page — and it
-   * is the only place the city and country appear as a pair. An algorithm, not a selector, which is
-   * why it is overridden rather than configured.
-   */
-  fromTitle() {
-    const parts = clean(document.title).split(/\s+-\s+/);
-    const where = parts.find((p) => /Upwork Freelancer from/i.test(p)) || "";
-    const [city, country] = where.replace(/.*from\s*/i, "").split(/,\s*/);
-    return {
-      name: parts[0] || null,
-      tagline: parts.length > 2 ? parts[1] : null,
-      city: clean(city) || null,
-      country: clean(country) || null,
-    };
-  }
-}
-
-/**
- * PeoplePerHour, which needs almost nothing.
- *
- * Deliberately thin, and that thinness is a finding rather than an omission: the generic readers
- * already pull a complete profile off PPH — name, tagline, city, country, rate with its currency,
- * earnings, skills, languages, portfolio, work history, education — with no entry here at all.
- *
- * What it does add is label-anchored, not class-anchored. Its live markup has not been inspected from
- * a terminal (the site is behind a session), so inventing `data-test`-style names for it would be
- * guessing dressed as knowledge. Matching the words a human reads is the honest option and the one
- * that is already proven to travel.
- */
-class PeoplePerHourReader extends Reader {
-  get labels() {
-    return { ...super.labels, budget: "Budget|Price" };
-  }
-}
-
-/**
- * Fiverr, parked. Kept whole so re-enabling stays one flag — see `enabled: false` in platforms.js.
- *
- * A gig is not a job posting: sellers publish offers and buyers come to them, so there is nothing
- * here to score. What its pages hold is your own side of it, which is read as rows.
- */
-class FiverrReader extends Reader {}
-
-const READERS = {
-  upwork: UpworkReader,
-  peopleperhour: PeoplePerHourReader,
-  fiverr: FiverrReader,
-};
+globalThis.ALExtractKit = { clean, structuredData, visibleText };
 
 /**
  * The reader for whichever marketplace this page belongs to.
@@ -583,10 +369,16 @@ const READERS = {
  * Constructed per call rather than cached: a single-page app changes the document under us between
  * reads, and a reader holding a memoised JSON-LD block from the previous route would answer about the
  * wrong page. One read is one instance.
+ *
+ * A missing registry means the reader files were not injected — a stale caller passing a shorter file
+ * list, most likely. Saying so beats a TypeError from somewhere three frames deeper.
  */
 function reader() {
   const platform = currentPlatform();
-  const Kind = READERS[platform?.id] || Reader;
+  if (!globalThis.ALReaders) {
+    throw new Error("The reader files were not injected — reload the extension and try again.");
+  }
+  const Kind = globalThis.ALReaders.for(platform?.id);
   return new Kind(platform);
 }
 
@@ -1416,7 +1208,7 @@ function whichPage() {
     // claim worth checking directly instead of inferring from a field's value.
     readerShape: () => {
       const shape = (id) => {
-        const Kind = READERS[id] || Reader;
+        const Kind = globalThis.ALReaders.for(id);
         const made = new Kind(null);
         return { name: Kind.name, jobTitle: made.sel("jobTitle"), skillToken: made.selectors.skillToken };
       };

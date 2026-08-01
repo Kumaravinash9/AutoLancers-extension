@@ -5,13 +5,28 @@
  * the fallbacks and the "null means not found" contract without ever loading their site.
  */
 import { chromium } from "playwright";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
-const src =
-  readFileSync(new URL("../src/content/platforms.js", import.meta.url), "utf8") +
-  "\n" +
-  readFileSync(new URL("../src/content/extract.js", import.meta.url), "utf8");
+/**
+ * The content scripts, in the order the extension injects them.
+ *
+ * Concatenated rather than imported because that is what `executeScript({files})` effectively does —
+ * separate classic scripts sharing one global scope — so a file that only works when bundled would
+ * pass here and fail in the browser. The order is the contract: extract.js publishes the helpers the
+ * base reader needs, and the base publishes the class each platform file extends.
+ */
+const CONTENT_FILES = [
+  "platforms.js",
+  "extract.js",
+  "readers/base.js",
+  "readers/upwork.js",
+  "readers/peopleperhour.js",
+  "readers/fiverr.js",
+];
+const src = CONTENT_FILES.map((f) =>
+  readFileSync(new URL(`../src/content/${f}`, import.meta.url), "utf8")
+).join("\n");
 const browser = await chromium.launch();
 const page = await browser.newPage();
 let failures = 0;
@@ -716,6 +731,36 @@ console.log("\ngetting to a page:");
   const guard = clicking.indexOf('if (page.reads !== "profile")');
   check("the click-through path guards against profile pages", guard !== -1, true);
   check("and the guard comes before the click", guard < clicking.indexOf("clickTo(fragment)"), true);
+}
+
+// --- the injection list ------------------------------------------------------------------
+//
+// The readers are split per marketplace, so the list of files to inject is now six long and lives in
+// two callers. A path that does not exist fails at click time with "Couldn't load the readers", which
+// names the file but only once someone is standing on a marketplace page waiting for it.
+console.log("\nthe files the extension injects:");
+{
+  const listed = (file) => {
+    const src = readFileSync(new URL(`../${file}`, import.meta.url), "utf8");
+    const block = src.slice(src.indexOf("files: ["), src.indexOf("]", src.indexOf("files: [")));
+    return [...block.matchAll(/"(src\/content\/[^"]+)"/g)].map((m) => m[1]);
+  };
+
+  const fromPopup = listed("src/popup/popup.js");
+  const fromWorker = listed("src/background/worker.js");
+
+  check("the popup injects every reader file", fromPopup.length, CONTENT_FILES.length);
+  // Two callers, one list. They drifted apart once before, on the platform table.
+  check("and the worker injects exactly the same ones", fromWorker, fromPopup);
+  check(
+    "in the order the tests concatenate them",
+    fromPopup.map((f) => f.replace("src/content/", "")),
+    CONTENT_FILES
+  );
+
+  for (const file of fromPopup) {
+    check(`${file} exists`, existsSync(new URL(`../${file}`, import.meta.url)), true);
+  }
 }
 
 // --- what gets sent to the backend ----------------------------------------------------

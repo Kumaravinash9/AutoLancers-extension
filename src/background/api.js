@@ -152,13 +152,17 @@ export async function pushPage(args) {
   // Your own profile has its own endpoint and its own rules — it mirrors onto the profile row every
   // score is computed from, so it is gated on `is_own` rather than accepted like a page of listings.
   // Routing it here keeps the collector from needing to know that.
-  if ((args.page?.reads || "jobs") === "profile") {
+  const reads = args.page?.reads || "jobs";
+  if (reads === "profile") {
     const me = args.result?.profile;
     if (!me || me.error) throw new Error(me?.error || "The profile could not be read.");
     const saved = await pushProfile(me, args.useLlm);
     return { stored: 1, created: 1, updated: 0, profile: true, skills: saved?.skills ?? 0 };
   }
-  return post("/ingest/collection", collectionPayload(args));
+  // Jobs go to the listing endpoint; everything else (contracts, proposals, rooms) is kept whole
+  // by the custom-pages endpoint. Same body either way — the path is what routes it.
+  const path = reads === "jobs" ? "/ingest/job-listing" : "/ingest/custom-pages";
+  return post(path, collectionPayload(args));
 }
 
 /**
@@ -175,7 +179,7 @@ function withLlm(data, useLlm) {
 /** A single job page, scored on arrival. The popup's Send button uses it. */
 export async function pushPosting(job, useLlm) {
   if (useLlm === undefined) ({ useLlm } = await pushSettings());
-  return post("/ingest/posting", withLlm(job, useLlm));
+  return post("/ingest/ondemand/job-posting", withLlm(job, useLlm));
 }
 
 /**
@@ -195,7 +199,7 @@ export async function pushPosting(job, useLlm) {
  */
 export async function pushPostings(postings) {
   if (!postings?.length) return { stored: 0, created: 0, updated: 0 };
-  return post("/ingest/postings", { postings });
+  return post("/ingest/job-postings", { postings });
 }
 
 /** Your own profile, mirrored onto its profile row. */
