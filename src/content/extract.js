@@ -354,14 +354,14 @@ function headingLike(regex) {
 /**
  * The shared helpers the reader classes need, published for the files that hold them.
  *
- * Three of them, out of the thousand-odd lines here. That ratio is the argument for the split being
+ * Four of them, out of the thousand-odd lines here. That ratio is the argument for the split being
  * where it is: the readers live in their own files because each marketplace's DOM is its own problem,
  * while the machinery for walking a DOM is not per-marketplace at all and stays put.
  *
  * Published before `readers/*.js` are evaluated — `executeScript({files})` runs them in the order
  * given, and the injection lists in `popup.js` and `worker.js` put this file first.
  */
-globalThis.ALExtractKit = { clean, structuredData, visibleText };
+globalThis.ALExtractKit = { clean, structuredData, visibleText, absolute };
 
 /**
  * The reader for whichever marketplace this page belongs to.
@@ -990,81 +990,15 @@ function afterRouteChange(previousUrl, timeoutMs = 15000) {
 }
 
 /**
- * Whether this page is the thing we asked for, or a wall standing in front of it.
+ * Whether this page is the thing we asked for, or a wall in front of it.
  *
- * The failure this exists to prevent: signed out of Upwork, every find-work URL redirects to the
- * login page. That page loads fine, so the tab reaches `complete`, and the job reader finds no
- * `/jobs/~id` links on it and returns an empty list. The run then reports **"0 found" on all eight
- * pages** — which reads exactly like a quiet day on the marketplace, and files "stored 0" to the
- * backend as though that were true. An empty list from a login page is not a small inaccuracy; it is
- * worse than an error, because nothing downstream can tell it from the truth.
- *
- * Three states, because they need different things from you:
- *
- *   `signed_out` — sign in, then collect again.
- *   `blocked`    — a challenge or a rate limit. Stop: more pages makes it worse, and this is the bot
- *                  detection whose signature is documented in `src/background/worker.js`.
- *   `ok`         — read it.
- *
- * The URL is checked first because a redirect is unambiguous, then the page's own content — a
- * marketplace can render a login wall in place without changing the URL, so both halves are needed.
+ * The reader's own — asking a DOM what it is showing is the per-marketplace job, so it lives on the
+ * reader with the rest of that. Kept here as a named entry point because the popup and the worker
+ * call `ALExtract.sessionState()` across an `executeScript` boundary, where a method on an object
+ * they cannot hold is not something they can name.
  */
 function sessionState() {
-  const platform = currentPlatform();
-  // The *raw* text, deliberately — not the overlay-stripped view the field readers use. A login wall
-  // and a challenge notice are very often rendered as a dialog, which is exactly what that view
-  // removes. Stripping here would hide the one thing this function exists to find, and the failure
-  // would be silent: every page would read as "ok" while returning nothing.
-  const text = (document.body?.innerText || "").slice(0, 4000);
-
-  if (platform?.isLoginPage?.(location.href)) {
-    return { status: "signed_out", why: "redirected to the login page" };
-  }
-
-  // A password field is as close to proof as this gets: no signed-in marketplace page has one
-  // outside of settings, and the collector never visits settings.
-  const asksForPassword = Boolean(document.querySelector('input[type="password"]'));
-  const invitesSignIn = /\b(log ?in|sign ?in|welcome back)\b/i.test(text.slice(0, 1200));
-  if (asksForPassword && invitesSignIn) {
-    return { status: "signed_out", why: "the page is asking you to sign in" };
-  }
-
-  /**
-   * A header offering to log you in, and carrying no link to your own profile.
-   *
-   * Two structural facts rather than any prose, which is what makes it safe. Every signed-in page of
-   * these sites links your own profile from its header — that is how `findOwnProfile` works at all —
-   * and a signed-out one offers Log in and Sign up in the same place instead. Neither claim depends
-   * on words that appear in footers and referral banners all over a signed-in site: matching the text
-   * alone calls a job feed with a footer, a referral banner, a cookie notice and a proposals page all
-   * signed-out, and that mistake halts a whole run and tells the app your session is broken.
-   *
-   * This is the case that reads `upwork.com` itself correctly. It is not a job page and not a profile
-   * page, so the page-type check was right to decline it — but "this page isn't one we read" is the
-   * useless truth when the useful one is that nobody is signed in.
-   */
-  const header = [...document.querySelectorAll("header a[href], nav a[href]")];
-  const offersLogin = header.some((a) => platform?.isLoginPage?.(absolute(a.getAttribute("href")) || ""));
-  const showsYourProfile = platform?.ownProfileLink
-    ? header.some((a) => {
-        const href = absolute(a.getAttribute("href"));
-        return href && platform.isProfilePage(href);
-      })
-    : false;
-  if (offersLogin && !showsYourProfile) {
-    return { status: "signed_out", why: "the header is offering to log you in" };
-  }
-
-  // A challenge page instead of the one we asked for. Which wording counts is the marketplace's own
-  // business — the generic signs live on the base reader and Upwork adds its own in its own file —
-  // so this asks rather than deciding. Title and text together, because an interstitial often says
-  // everything it has to say in the title alone.
-  const evidence = `${document.title}\n${text}`;
-  if (reader().challengeSigns.some((sign) => sign.test(evidence))) {
-    return { status: "blocked", why: "served a challenge page instead" };
-  }
-
-  return { status: "ok", why: null };
+  return reader().sessionState();
 }
 
 /**

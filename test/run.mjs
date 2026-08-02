@@ -529,6 +529,35 @@ console.log("\nPeoplePerHour profile (no per-site code at all):");
 
 console.log("\nthe reader hierarchy:");
 {
+  // sessionState is the reader's own now, so a marketplace that hides its login somewhere else can
+  // replace the whole answer rather than bolting a special case onto shared code. Nothing overrides
+  // it yet — the seam exists before it is needed, which is the only time it can be added cheaply.
+  const overridable = await page.evaluate((code) => {
+    Object.defineProperty(window, "__href", { value: "https://www.upwork.com/", configurable: true });
+    eval(code);
+    const { Reader } = globalThis.ALReaders;
+    const own = (id) =>
+      Object.prototype.hasOwnProperty.call(globalThis.ALReaders.for(id).prototype, "sessionState");
+    return {
+      onBase: typeof Reader.prototype.sessionState === "function",
+      overridden: { upwork: own("upwork"), peopleperhour: own("peopleperhour"), fiverr: own("fiverr") },
+      // A subclass that replaces it is answered by its own, not the base's.
+      replaceable: (() => {
+        class Odd extends Reader {
+          sessionState() {
+            return { status: "signed_out", why: "this site hides it elsewhere" };
+          }
+        }
+        return new Odd(null).sessionState().why;
+      })(),
+    };
+  }, src.replace(/location\.href/g, "window.__href"));
+
+  check("sessionState lives on the base", overridable.onBase, true);
+  check("no marketplace needs to override it yet", Object.values(overridable.overridden), [false, false, false]);
+  check("but one can, wholesale", overridable.replaceable, "this site hides it elsewhere");
+
+
   // Upwork's challenge wording now lives in upwork.js; the generic ones stay on the base. A site
   // whose challenge says something of its own adds it in its own file rather than in shared code.
   const challenge = await page.evaluate((code) => {
