@@ -12,8 +12,6 @@
  * already proven to travel.
  */
 (() => {
-  const { clean } = globalThis.ALExtractKit;
-
   class PeoplePerHourReader extends globalThis.ALReaders.Reader {
 
     get labels() {

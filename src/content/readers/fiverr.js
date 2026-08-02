@@ -6,8 +6,6 @@
  * needs no selectors of its own.
  */
 (() => {
-  const { clean } = globalThis.ALExtractKit;
-
   class FiverrReader extends globalThis.ALReaders.Reader {
 
   }
