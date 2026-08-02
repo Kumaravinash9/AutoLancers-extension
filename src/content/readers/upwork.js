@@ -55,6 +55,17 @@
     }
 
     /**
+     * Upwork's own auth routes.
+     *
+     * The generic rule already catches /ab/account-security/login and /nx/signup, because both end in
+     * a word it knows. SSO does not — a header link to /ab/account-security/sso is an offer to log in
+     * that says neither "login" nor "signin" anywhere in it.
+     */
+    get loginSigns() {
+      return [...super.loginSigns, /upwork\.com\/ab\/account-security\/sso/];
+    }
+
+    /**
      * "Name - Tagline - Upwork Freelancer from City, Country".
      *
      * Written for search engines, so it outlives redesigns that move every element on the page — and it

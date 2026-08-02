@@ -318,6 +318,48 @@ check("a login wall on a find-work URL is still caught", wallInPlace.status, "si
 const home = await readFrom("logged-out-home.html", "https://www.upwork.com/", "sessionState");
 check("the signed-out homepage is signed_out, not merely unsupported", home.status, "signed_out");
 
+// The same page on PeoplePerHour, from a real logged-out visit that the extension read as signed-in
+// and collected anyway. The header said "Log in" the whole time; the matcher demanded
+// peopleperhour.com/login and the site serves /site/login, so nothing matched and a run against an
+// empty page reported a quiet marketplace. Recognising which URLs are login URLs is a per-site fact,
+// which is why it now lives on the reader classes rather than in one shared regex.
+const pphOut = await readFrom("pph-logged-out.html", "https://www.peopleperhour.com/", "sessionState");
+check("the signed-out PeoplePerHour page is caught", pphOut.status, "signed_out");
+check("and says why", pphOut.why, "the header is offering to log you in");
+
+// The half that matters more: the same check must not fire on a page where you *are* signed in.
+// /hire-freelancers sits in that header too and is a search page, not anyone's profile.
+for (const [fixture, url] of [
+  ["pph-profile.html", "https://www.peopleperhour.com/freelancer/priya-r"],
+  ["own-profile.html", "https://www.upwork.com/freelancers/~019abcdef123456789"],
+  ["listing.html", "https://www.upwork.com/nx/find-work/best-matches"],
+]) {
+  check(`${fixture} still reads as signed in`, (await readFrom(fixture, url, "sessionState")).status, "ok");
+}
+
+// Each site names its auth routes differently after the host, so the rule matches the last segment.
+// Upwork's SSO route says neither "login" nor "signin", which is why it is declared in its own file.
+{
+  const authUrls = await page.evaluate((code) => {
+    Object.defineProperty(window, "__href", { value: "https://www.upwork.com/", configurable: true });
+    eval(code);
+    const ask = (id, url) => new (globalThis.ALReaders.for(id))(null).isLoginUrl(url);
+    return {
+      upworkLogin: ask("upwork", "https://www.upwork.com/ab/account-security/login"),
+      upworkSso: ask("upwork", "https://www.upwork.com/ab/account-security/sso"),
+      pphLogin: ask("peopleperhour", "https://www.peopleperhour.com/site/login"),
+      pphRegister: ask("peopleperhour", "https://www.peopleperhour.com/site/register#freelancer"),
+      // Neither a job whose title contains the word, nor PPH's own signed-in pages under /site/.
+      notAJobTitle: ask("peopleperhour", "https://www.peopleperhour.com/freelance-jobs/build-a-registration-system-4123456"),
+      notSavedJobs: ask("peopleperhour", "https://www.peopleperhour.com/site/saved-jobs"),
+    };
+  }, src.replace(/location\.href/g, "window.__href"));
+  check("every real auth route is recognised",
+        [authUrls.upworkLogin, authUrls.upworkSso, authUrls.pphLogin, authUrls.pphRegister],
+        [true, true, true, true]);
+  check("and nothing else is", [authUrls.notAJobTitle, authUrls.notSavedJobs], [false, false]);
+}
+
 // Structural, not textual: a header offering login and carrying no link to your own profile. Those
 // words appear in footers and referral banners all over a signed-in site, and matching them alone
 // called four signed-in pages logged out — a mistake that halts a run and tells the app the session

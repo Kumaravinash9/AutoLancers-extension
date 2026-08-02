@@ -49,10 +49,6 @@ const PLATFORMS = {
     jobExample: "upwork.com/jobs/~021abc…",
 
     // Where a signed-out request lands. Upwork redirects any find-work URL here, so the reader must
-    // recognise it: without this a logged-out run reports "0 jobs found" on every page, which is
-    // indistinguishable from a quiet day on the marketplace.
-    isLoginPage: (url) =>
-      /upwork\.com\/(?:ab\/account-security\/login|nx\/signup|ab\/account-security\/sso)/.test(url),
     // Your own profile is whatever the site's own header links to. Only you get that link, so
     // following it is how "my profile" is answered without asking you to paste a URL.
     ownProfileLink: 'a[href*="/freelancers/~"]',
@@ -92,7 +88,6 @@ const PLATFORMS = {
     profileExample: "peopleperhour.com/freelancer/…",
     jobExample: "peopleperhour.com/freelance-jobs/…-4123456",
 
-    isLoginPage: (url) => /peopleperhour\.com\/(?:session\/new|login|signin|register)/.test(url),
     ownProfileLink: 'a[href*="/freelancer/"]',
     profileId: (url) => (url.match(/\/freelancer\/([^/?#]+)/) || [null, null])[1],
 
@@ -139,7 +134,6 @@ const PLATFORMS = {
     profileExample: "fiverr.com/your-username",
     jobExample: "fiverr.com/briefs/…",
 
-    isLoginPage: (url) => /fiverr\.com\/(?:login|join|signin)/.test(url),
     // Fiverr's header links your own profile as `/<username>`; `/users/<username>/…` also carries it.
     ownProfileLink: 'a[href*="/users/"], header a[href^="/"]',
     profileId: (url) =>

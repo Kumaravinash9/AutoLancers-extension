@@ -19,6 +19,22 @@
     get labels() {
       return { ...super.labels, budget: "Budget|Price" };
     }
+
+    /**
+     * PeoplePerHour keeps every auth route under `/site/`: `/site/login`, `/site/register`.
+     *
+     * The same prefix its own page list already uses for `/site/saved-jobs` and `/site/proposals`, and
+     * the reason a logged-out visit went undetected — the old matcher demanded `peopleperhour.com/login`
+     * and this site has no such URL, so the header sat there offering "Log in" while the extension
+     * collected an empty page and reported it as a quiet day.
+     *
+     * The generic rule in the base now catches both of these on its own. They are still written down
+     * here because these are the routes a real signed-out page was observed to carry, and a matcher
+     * that happens to work is worth less than one that was checked.
+     */
+    get loginSigns() {
+      return [...super.loginSigns, /peopleperhour\.com\/site\/(?:login|signin|register)/];
+    }
   }
 
   globalThis.ALReaders.register("peopleperhour", PeoplePerHourReader);

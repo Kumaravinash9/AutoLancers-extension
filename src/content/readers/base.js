@@ -168,7 +168,7 @@ globalThis.ALReaders ||= (() => {
       // would be silent: every page would read as "ok" while returning nothing.
       const text = (document.body?.innerText || "").slice(0, 4000);
 
-      if (platform?.isLoginPage?.(location.href)) {
+      if (this.isLoginUrl(location.href)) {
         return { status: "signed_out", why: "redirected to the login page" };
       }
 
@@ -195,7 +195,7 @@ globalThis.ALReaders ||= (() => {
        * useless truth when the useful one is that nobody is signed in.
        */
       const header = [...document.querySelectorAll("header a[href], nav a[href]")];
-      const offersLogin = header.some((a) => platform?.isLoginPage?.(absolute(a.getAttribute("href")) || ""));
+      const offersLogin = header.some((a) => this.isLoginUrl(absolute(a.getAttribute("href")) || ""));
       const showsYourProfile = platform?.ownProfileLink
         ? header.some((a) => {
             const href = absolute(a.getAttribute("href"));
@@ -233,6 +233,32 @@ globalThis.ALReaders ||= (() => {
         /access denied|unusual (?:traffic|activity)|are you a (?:human|robot)|verify you are human/i,
         /^just a moment/i,
       ];
+    }
+
+    /**
+     * URL shapes that mean "this is where you log in".
+     *
+     * Generic, and deliberately anchored to the *last* path segment rather than the first: every one
+     * of these sites names its auth routes login/signin/signup/register/join, but they disagree
+     * completely about what comes before. Upwork serves /ab/account-security/login, PeoplePerHour
+     * serves /site/login, Fiverr serves /login. A matcher written from one site's shape silently fails
+     * on the others — which is exactly what happened, and why this now lives here.
+     *
+     * The trailing `[/?#]|$` is what keeps "register" from matching a job titled "build a registration
+     * system". A site with a route these words do not describe adds it in its own file.
+     */
+    get loginSigns() {
+      return [/\/(?:log-?in|sign-?in|sign-?up|register|join)(?:[/?#]|$)/i];
+    }
+
+    /**
+     * Does this URL take you to a login page?
+     *
+     * Asked of the reader rather than the platform table, because the answer is read off a page — the
+     * href of a header link — and reading pages is what a reader is for.
+     */
+    isLoginUrl(url) {
+      return Boolean(url) && this.loginSigns.some((sign) => sign.test(url));
     }
 
     /** The name, tagline and location a page's `<title>` carries. Generic: it carries none. */
