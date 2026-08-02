@@ -958,6 +958,28 @@ console.log("\nthe app hands the extension its configuration:");
   check("a token is required for the handover to apply", /if \(!secret\) return \{ ok: false/.test(bridge), true);
 }
 
+// The handle is asked of the platform, not guessed. `profileId` already exists per marketplace because
+// `isOwnProfile` needs it to decide whose profile is on screen, so a second derivation inside
+// `readProfile` was one question with two answers — the same drift that has bitten the worker's URL
+// matchers and the load test's host regexes. These are the real URLs, in each site's own shape.
+console.log("\nthe handle comes from the platform that defines it:");
+{
+  const real = [
+    ["upwork", "https://www.upwork.com/freelancers/~0139befba192c820d1",
+     "~0139befba192c820d1", "own-profile.html"],
+    ["peopleperhour",
+     "https://www.peopleperhour.com/freelancer/avinash-kumar-senior-software-engineer-zxjamvaw",
+     "avinash-kumar-senior-software-engineer-zxjamvaw", "pph-profile.html"],
+  ];
+  for (const [id, url, handle, fixture] of real) {
+    check(`${id} reads its own handle shape`, (await readFrom(fixture, url, "readProfile")).username, handle);
+  }
+
+  // Asked, not re-derived: the fallback chain may only run when no platform can answer.
+  const extract = readFileSync(new URL("../src/content/extract.js", import.meta.url), "utf8");
+  check("readProfile asks the platform first", /platformForPage\?\.profileId\?\.\(url\) \|\|/.test(extract), true);
+}
+
 await browser.close();
 console.log(failures ? `\n${failures} failing` : "\nall checks passed");
 process.exit(failures ? 1 : 0);

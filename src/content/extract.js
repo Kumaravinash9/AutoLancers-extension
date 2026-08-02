@@ -505,7 +505,25 @@ function blocks(containerSelectors, mapper, limit = 25) {
 
 function readProfile() {
   const url = location.href.split("?")[0];
+
+  /**
+   * The account's handle, asked of the marketplace rather than guessed from the URL.
+   *
+   * `profileId` is already defined per platform, because it is what `isOwnProfile` compares to decide
+   * whose profile you are looking at — so deriving it a second time here meant two answers to one
+   * question, and the versions could disagree. This file has been bitten by that three times now: the
+   * worker's copy of the URL matchers drifted, the load test's copy of the host regexes drifted, and
+   * this was the third.
+   *
+   * Upwork writes it as `~0139befba192c820d1` and PeoplePerHour as a slug —
+   * `avinash-kumar-senior-software-engineer-zxjamvaw` — and neither shape is anyone else's business.
+   *
+   * The chain below is the fallback for a site with no entry at all, which is the only case the
+   * platform cannot answer.
+   */
+  const platformForPage = currentPlatform();
   const username =
+    platformForPage?.profileId?.(url) ||
     (url.match(/~[0-9a-zA-Z]{10,}/) || [])[0] ||
     (url.match(/\/(?:freelancers?|freelancer)\/([^/?]+)/) || [])[1] ||
     (url.match(/^https?:\/\/[^/]+\/([A-Za-z0-9_.-]+)\/?$/) || [])[1];
