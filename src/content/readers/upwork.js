@@ -40,6 +40,21 @@
     }
 
     /**
+     * Upwork's own challenge page, on top of the generic ones.
+     *
+     * This wording is theirs and nobody else's — it is what appeared when eight pages were read at
+     * once, and recognising it is what lets a run stop rather than hammering through the rest into a
+     * site that has just said it is unhappy. Added to the base's list rather than replacing it, so a
+     * Cloudflare interstitial in front of Upwork is still caught.
+     */
+    get challengeSigns() {
+      return [
+        ...super.challengeSigns,
+        /there was an error loading this page|please contact customer support/i,
+      ];
+    }
+
+    /**
      * "Name - Tagline - Upwork Freelancer from City, Country".
      *
      * Written for search engines, so it outlives redesigns that move every element on the page — and it

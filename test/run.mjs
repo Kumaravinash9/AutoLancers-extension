@@ -529,6 +529,26 @@ console.log("\nPeoplePerHour profile (no per-site code at all):");
 
 console.log("\nthe reader hierarchy:");
 {
+  // Upwork's challenge wording now lives in upwork.js; the generic ones stay on the base. A site
+  // whose challenge says something of its own adds it in its own file rather than in shared code.
+  const challenge = await page.evaluate((code) => {
+    Object.defineProperty(window, "__href", { value: "https://www.upwork.com/", configurable: true });
+    eval(code);
+    const upwork = globalThis.ALReaders.for("upwork");
+    const base = globalThis.ALReaders.Reader;
+    const sources = (Kind) => new Kind(null).challengeSigns.map((r) => r.source);
+    return { upwork: sources(upwork), base: sources(base) };
+  }, src.replace(/location\.href/g, "window.__href"));
+
+  const upworkOnly = challenge.upwork.filter((r) => !challenge.base.includes(r));
+  check("Upwork's own wording is in Upwork's file", upworkOnly.length, 1);
+  check("and it is the phrase their challenge page uses", /error loading this page/.test(upworkOnly[0]), true);
+  // Added to the base's list, not replacing it — a Cloudflare interstitial in front of Upwork still
+  // counts.
+  check("the generic signs survive the override", challenge.base.every((r) => challenge.upwork.includes(r)), true);
+  check("a site with no file of its own gets the generic ones", challenge.base.length, 2);
+
+
   const shape = await page.evaluate((code) => {
     Object.defineProperty(window, "__href", { value: "https://www.upwork.com/", configurable: true });
     eval(code);

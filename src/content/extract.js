@@ -1055,13 +1055,12 @@ function sessionState() {
     return { status: "signed_out", why: "the header is offering to log you in" };
   }
 
-  // Upwork's challenge page. The wording is theirs — it is what appeared when eight pages were read
-  // at once, and recognising it is what lets the run stop instead of hammering through the rest.
-  if (
-    /there was an error loading this page|please contact customer support/i.test(text) ||
-    /access denied|unusual (?:traffic|activity)|are you a (?:human|robot)|verify you are human/i.test(text) ||
-    /^just a moment/i.test(document.title)
-  ) {
+  // A challenge page instead of the one we asked for. Which wording counts is the marketplace's own
+  // business — the generic signs live on the base reader and Upwork adds its own in its own file —
+  // so this asks rather than deciding. Title and text together, because an interstitial often says
+  // everything it has to say in the title alone.
+  const evidence = `${document.title}\n${text}`;
+  if (reader().challengeSigns.some((sign) => sign.test(evidence))) {
     return { status: "blocked", why: "served a challenge page instead" };
   }
 

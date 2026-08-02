@@ -133,6 +133,23 @@ globalThis.ALReaders ||= (() => {
       return Array.isArray(value) ? value : [value].filter(Boolean);
     }
 
+    /**
+     * Wording that means a site served a challenge instead of the page.
+     *
+     * Generic here — Cloudflare's interstitial and the phrasings bot detection reaches for — because
+     * none of it belongs to a marketplace. A site whose challenge says something of its own adds it
+     * in its own file, which is what Upwork does.
+     *
+     * Matched against the title *and* the text, since an interstitial often says everything it has to
+     * say in the title alone.
+     */
+    get challengeSigns() {
+      return [
+        /access denied|unusual (?:traffic|activity)|are you a (?:human|robot)|verify you are human/i,
+        /^just a moment/i,
+      ];
+    }
+
     /** The name, tagline and location a page's `<title>` carries. Generic: it carries none. */
     fromTitle() {
       const parts = clean(document.title).split(/\s+-\s+/);
