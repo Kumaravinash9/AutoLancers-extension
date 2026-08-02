@@ -14,6 +14,27 @@
 (() => {
   class PeoplePerHourReader extends globalThis.ALReaders.Reader {
 
+    /**
+     * Where PeoplePerHour keeps the things it does not label.
+     *
+     * The rate is the case that forced this. PPH renders it as an unmarked span whose two divs split
+     * the amount from the unit — `<span class="member-cost"><div>$12</div><div>/hr</div></span>` — with
+     * no itemprop, no heading and no adjacent label. So all three generic routes miss it: the base
+     * looks for `[itemprop='priceRange']`, the fallback looks for a *heading* shaped like "$12/hr",
+     * and the label search has no word to anchor to. The profile came back with a null rate and looked
+     * complete.
+     *
+     * Prepended to the base's list rather than replacing it, so a redesign that adds an itemprop still
+     * works, and this class name going away degrades to the generic answer instead of to nothing.
+     */
+    get selectors() {
+      const base = super.selectors;
+      return {
+        ...base,
+        profileRate: [".member-cost", ...base.profileRate],
+      };
+    }
+
     get labels() {
       return { ...super.labels, budget: "Budget|Price" };
     }

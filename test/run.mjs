@@ -555,7 +555,10 @@ console.log("\nPeoplePerHour profile (no per-site code at all):");
   // be filled with "PeoplePerHour".
   check("tagline from the title's middle part", pr.tagline, "Full-Stack Developer");
   check("city and country from itemprop, not the title", [pr.city, pr.country], ["Manchester", "United Kingdom"]);
-  check("rate and its currency", [pr.hourly_rate, pr.currency], [45, "GBP"]);
+  // From `.member-cost`, which PPH declares in its own reader — an unmarked span with the amount and
+  // the unit in separate divs. Nothing generic finds it: no itemprop, not a heading, no label to
+  // anchor to. Before the reader knew the class name this was null while the profile looked complete.
+  check("rate from the site's own unlabelled markup", [pr.hourly_rate, pr.currency], [12, "USD"]);
   check("earnings, K expanded", pr.total_earnings, 82000);
   check("jobs and hours", [pr.total_jobs, pr.total_hours], [134, 2410]);
   // Briefly 2410: a character window treated the hours on the line above as adjacent to "reviews".

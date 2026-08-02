@@ -20,7 +20,13 @@
 <main>
   <h1 itemprop="name">Priya R.</h1>
   <h2>Full-Stack Developer</h2>
-  <h3 itemprop="priceRange">£45.00/hr</h3>
+  <!--
+    The real thing, from a live profile. No itemprop, no heading, no label beside it — an unmarked
+    span whose two divs split the amount from the unit. The invented `itemprop="priceRange"` heading
+    that used to stand here was read correctly by the generic reader and by nothing on the actual site.
+  -->
+  <span class="member-cost">
+                      <div>$12</div><div>/hr</div>                </span>
 
   <div itemprop="country-name">United Kingdom</div>
   <div itemprop="locality">Manchester</div>
