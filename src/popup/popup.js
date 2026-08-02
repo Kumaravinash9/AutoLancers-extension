@@ -359,6 +359,7 @@ async function renderCollect(forPlatform = null) {
   const { "collect.settings": collectSettings = {} } =
     await chrome.storage.local.get("collect.settings");
   const push = { ...PUSH_DEFAULTS, ...collectSettings };
+  console.log("renderCollect", reg, state, collectSettings, push);
   // Filing needs somewhere to file to. Without a token the two controls below would promise
   // something that cannot happen, so they are simply not offered.
   const { token } = await settings();
@@ -405,6 +406,7 @@ async function renderCollect(forPlatform = null) {
     const keys = [...document.querySelectorAll(".checks input:checked")].map((i) => i.value);
     if (!keys.length) return;
     const { "collect.settings": stored = {} } = await chrome.storage.local.get("collect.settings");
+    console.log("collect.settings", stored, keys, platform, $("deep").checked, $("push-on")?.checked, $("push-llm")?.checked);
     await chrome.storage.local.set({
       "collect.settings": {
         ...stored,
@@ -554,6 +556,7 @@ async function start() {
   }
 
   const reg = await registry({ url: tab?.url });
+  console.log("registry", reg, tab?.url);
 
   if (!reg.platform) {
     // Off a supported site the page readers have nothing to read, but a collection still can —

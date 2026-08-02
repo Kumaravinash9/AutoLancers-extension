@@ -1029,6 +1029,32 @@ function sessionState() {
     return { status: "signed_out", why: "the page is asking you to sign in" };
   }
 
+  /**
+   * A header offering to log you in, and carrying no link to your own profile.
+   *
+   * Two structural facts rather than any prose, which is what makes it safe. Every signed-in page of
+   * these sites links your own profile from its header — that is how `findOwnProfile` works at all —
+   * and a signed-out one offers Log in and Sign up in the same place instead. Neither claim depends
+   * on words that appear in footers and referral banners all over a signed-in site: matching the text
+   * alone calls a job feed with a footer, a referral banner, a cookie notice and a proposals page all
+   * signed-out, and that mistake halts a whole run and tells the app your session is broken.
+   *
+   * This is the case that reads `upwork.com` itself correctly. It is not a job page and not a profile
+   * page, so the page-type check was right to decline it — but "this page isn't one we read" is the
+   * useless truth when the useful one is that nobody is signed in.
+   */
+  const header = [...document.querySelectorAll("header a[href], nav a[href]")];
+  const offersLogin = header.some((a) => platform?.isLoginPage?.(absolute(a.getAttribute("href")) || ""));
+  const showsYourProfile = platform?.ownProfileLink
+    ? header.some((a) => {
+        const href = absolute(a.getAttribute("href"));
+        return href && platform.isProfilePage(href);
+      })
+    : false;
+  if (offersLogin && !showsYourProfile) {
+    return { status: "signed_out", why: "the header is offering to log you in" };
+  }
+
   // Upwork's challenge page. The wording is theirs — it is what appeared when eight pages were read
   // at once, and recognising it is what lets the run stop instead of hammering through the rest.
   if (

@@ -54,10 +54,24 @@ So every read checks the page before parsing it, and reports one of three states
 | `signed_out` | a login wall | the run **stops**, the popup says so, the backend is told |
 | `blocked` | a challenge or rate limit | the run **stops** — more pages makes it worse |
 
-Detected by URL *and* by content, because a marketplace can render a login wall in place without
-changing the URL: a redirect to a known login path, or a password field alongside a "log in" heading,
-or Upwork's own challenge wording (*"There was an error loading this page"* — the text that appeared
+Three signals, none of them prose alone:
+
+1. **The URL** — a redirect to a known login path. Unambiguous when it fires, because a redirect is a
+   fact rather than an inference.
+2. **The header** — it offers Log in, and carries no link to your own profile. Structural, and it's
+   what reads `upwork.com` itself correctly: that page is neither a job nor a profile, so the page-type
+   check declines it, but "isn't one we read" is the useless truth when the useful one is that nobody
+   is signed in. A signed-in header *always* links your profile — it's how `findOwnProfile` works.
+3. **A password field beside a "log in" heading** — for a wall rendered in place without the URL
+   changing.
+
+Plus Upwork's own challenge wording (*"There was an error loading this page"* — the text that appeared
 when eight pages were read at once).
+
+**Never the words alone.** "Log in" and "Sign up" sit in the footer of every page on these sites, in
+referral banners, and in cookie notices — matching on text called a job feed, a referral banner, a
+cookie notice and a proposals page all signed-out, four for four. That mistake is expensive: it halts
+the whole run and tells the app your session is broken while you're sitting there logged in.
 
 The run halts on the **first** page that hits a wall. There's nothing behind it, so the remaining
 seven are seven pointless requests — and if the state is `blocked`, seven requests to a site that has

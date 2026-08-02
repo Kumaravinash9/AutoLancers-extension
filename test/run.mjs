@@ -312,6 +312,28 @@ const wallInPlace = await readFrom(
 );
 check("a login wall on a find-work URL is still caught", wallInPlace.status, "signed_out");
 
+// The marketing homepage, signed out — the case that reported "this page isn't one AutoLancers reads
+// directly". True, and the useless truth: it is neither a job nor a profile page, so the page-type
+// check was right to decline it, but what a person needs told is that nobody is signed in.
+const home = await readFrom("logged-out-home.html", "https://www.upwork.com/", "sessionState");
+check("the signed-out homepage is signed_out, not merely unsupported", home.status, "signed_out");
+
+// Structural, not textual: a header offering login and carrying no link to your own profile. Those
+// words appear in footers and referral banners all over a signed-in site, and matching them alone
+// called four signed-in pages logged out — a mistake that halts a run and tells the app the session
+// is broken.
+await page.setContent(`
+  <header><nav><a href="/freelancers/~01abc123def456">Your profile</a></nav></header>
+  <main><article><a href="/jobs/~021999888777666555">A job</a></article></main>
+  <footer><a href="/nx/signup/">Sign up</a> <a href="/ab/account-security/login">Log in</a></footer>`);
+const stillIn = await page.evaluate((code) => {
+  Object.defineProperty(window, "__href", { value: "https://www.upwork.com/nx/find-work/best-matches", configurable: true });
+  Object.defineProperty(window, "__host", { value: "www.upwork.com", configurable: true });
+  eval(code);
+  return globalThis.ALExtract.sessionState().status;
+}, src.replace(/location\.href/g, "window.__href").replace(/location\.hostname/g, "window.__host"));
+check("a login link in the footer does not mean signed out", stillIn, "ok");
+
 check(
   "whichPage answers signed_out before it answers a page type",
   await readFrom("login.html", "https://www.upwork.com/ab/account-security/login", "whichPage"),

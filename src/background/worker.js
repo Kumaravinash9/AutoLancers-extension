@@ -155,6 +155,7 @@ function platformForUrl(url) {
   let host;
   try {
     host = new URL(url).hostname;
+    console.log("platformForUrl", url, host);
   } catch {
     return null;
   }
