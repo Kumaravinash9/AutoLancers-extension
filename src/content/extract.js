@@ -354,7 +354,7 @@ function headingLike(regex) {
 /**
  * The shared helpers the reader classes need, published for the files that hold them.
  *
- * Eight of them, out of the thousand-odd lines here. That ratio is still the argument for the split
+ * Ten of them, out of the thousand-odd lines here. That ratio is still the argument for the split
  * being where it is: the readers live in their own files because each marketplace's DOM is its own
  * problem, while the machinery for walking a DOM is not per-marketplace at all and stays put.
  *
@@ -367,7 +367,7 @@ function headingLike(regex) {
  */
 globalThis.ALExtractKit = {
   clean, structuredData, visibleText, absolute,
-  firstOf, headingLike, inSection, textOfAll,
+  firstOf, headingLike, headingsMatching, inSection, meta, textOfAll,
 };
 
 /**
@@ -420,17 +420,13 @@ function readJob() {
   const [budgetMin, budgetMax] = toRange(budgetText);
 
   const proposalsText = sel("jobProposals");
-  const proposalMatch = pageText.match(/Proposals[^0-9]{0,40}(\d+)\s*(?:to|–|-)?\s*(\d+)?/i);
 
   return {
     platform: me.platform?.id || "unknown",
     external_id: externalId,
     url,
     title:
-      posting.title ||
-      sel("jobTitle") ||
-      meta("og:title") ||
-      clean(document.title.replace(/\s*[-|]\s*(Upwork|PeoplePerHour|Fiverr).*$/i, "")),
+      posting.title || sel("jobTitle") || meta("og:title") || me.jobTitleFallback(),
     description: description.slice(0, 20000),
 
     // The signed-in account this page was read under, so the backend attributes the job to that
@@ -441,17 +437,7 @@ function readJob() {
     // model is wanted (see api.js `withLlm`); the backend caps its length.
     page_text: (pageText || "").slice(0, 200000),
 
-    // The section fallback is the same one `readProfile` has always used successfully, and it is why
-    // a PeoplePerHour job now reports its skills: the words under a "Skills" heading, when no
-    // attribute marks them.
-    skills: (() => {
-      const bySelector = textOfAll(me.sel("jobSkills"));
-      if (bySelector.length) return bySelector;
-      const scoped = inSection("Skills", me.selectors.skillToken)
-        .map((n) => clean(n.textContent))
-        .filter(Boolean);
-      return [...new Set(scoped)].slice(0, 30);
-    })(),
+    skills: me.jobSkills(),
 
     // Terms
     work_type: hourly ? "hourly" : budgetMin !== null ? "fixed" : null,
@@ -466,7 +452,7 @@ function readJob() {
 
     // Competition, which the backend scores rather than gates on
     proposal_count:
-      toNumber(proposalsText) ?? (proposalMatch ? Number(proposalMatch[2] || proposalMatch[1]) : null),
+      toNumber(proposalsText) ?? me.proposalCount(),
     interviewing: toNumber(label("interviewing")),
     invites_sent: toNumber(label("invitesSent")),
     unanswered_invites: toNumber(label("unansweredInvites")),
@@ -489,7 +475,7 @@ function readJob() {
       hire_rate: label("hireRate"),
       avg_hourly_paid: toNumber(label("avgHourly")),
       member_since: sel("clientMemberSince") || label("memberSince"),
-      payment_verified: /payment (method )?verified/i.test(pageText),
+      payment_verified: me.paymentVerified(),
       company_size: label("companySize"),
       industry: sel("clientIndustry"),
     },
@@ -581,21 +567,14 @@ function readProfile() {
 
     // Identity — itemprop survived every redesign so far; the title is the backstop.
     display_name: sel("profileName") || titled.name,
-    tagline: headingLike(/^(?!.*\/hr)[A-Z][^$]{8,90}(Engineer|Developer|Designer|Consultant|Specialist|Manager|Architect|Writer|Marketer)/) ||
-      titled.tagline,
+    tagline: me.tagline(),
     summary: sel("profileSummary") || meta("description", "og:description"),
-    avatar_url:
-      absolute(document.querySelector('img[alt*="profile" i], [class*="avatar"] img')?.src) ||
-      meta("og:image"),
+    avatar_url: me.avatarUrl(),
     country: sel("profileCountry") || titled.country,
     city: sel("profileCity") || titled.city,
     timezone: label("timezone"),
     availability: label("availability"),
-    languages: [...new Set(
-      inSection("Languages", "li, " + me.selectors.skillToken)
-        .map((n) => clean(n.textContent))
-        .filter(Boolean)
-    )].slice(0, 20),
+    languages: me.languages(),
 
     // Money
     hourly_rate: toNumber(rateText),
@@ -611,45 +590,12 @@ function readProfile() {
 
     skills,
 
-    portfolio: (() => {
-      const links = inSection("Portfolio", "a[href]");
-      if (!links.length) return [];
-      return links
-        .map((a) => ({
-          title: clean(a.getAttribute("aria-label") || a.textContent) || null,
-          url: absolute(a.getAttribute("href")),
-          image: absolute(a.querySelector("img")?.getAttribute("src")),
-        }))
-        .filter((entry) => entry.title || entry.image)
-        .slice(0, 25);
-    })(),
+    portfolio: me.portfolio(),
 
-    work_history: [...new Set(
-      inSection("Work history", "h4, h5, li")
-        .map((node) => clean(node.textContent))
-        .filter((text) => text && text.length > 3)
-    )]
-      .slice(0, 25)
-      .map((title) => ({ title })),
-
-    // Each role is one heading, "Software Engineer - III | Ebay". Splitting on the pipe is what
-    // separates the role from the employer; without it both collapse into one string.
-    employment: headingsMatching(/\|/).map((text) => {
-      const [role, company] = text.split("|").map(clean);
-      return { title: role || null, company: company || null };
-    }),
-
-    education: [...new Set(
-      inSection("Education", "h4, h5, li").map((n) => clean(n.textContent)).filter(Boolean)
-    )]
-      .slice(0, 10)
-      .map((school) => ({ school })),
-
-    certifications: [...new Set(
-      inSection("Certifications", "h4, h5, li")
-        .map((n) => clean(n.textContent))
-        .filter((text) => text && !/Earn \d+ Connects|Claim certification/i.test(text))
-    )].slice(0, 20),
+    work_history: me.workHistory(),
+    employment: me.employment(),
+    education: me.education(),
+    certifications: me.certifications(),
   };
 }
 

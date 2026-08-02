@@ -11,7 +11,7 @@
  * base's generic lists rather than replacing them — a rename degrades to the fallback, not to nothing.
  */
 (() => {
-  const { clean, headingLike } = globalThis.ALExtractKit;
+  const { clean, headingLike, headingsMatching } = globalThis.ALExtractKit;
 
   class UpworkReader extends globalThis.ALReaders.Reader {
 
@@ -52,6 +52,48 @@
         ...super.challengeSigns,
         /there was an error loading this page|please contact customer support/i,
       ];
+    }
+
+    /**
+     * The line under the name, which Upwork does not mark at all.
+     *
+     * Matched by shape: a capitalised heading ending in a role word. The `(?!.*\/hr)` is not
+     * incidental — without it this matches Upwork's own rate heading, "$20.00/hr", and files it as the
+     * tagline. Both of those facts are Upwork's markup, and both lived in the shared reader.
+     *
+     * PeoplePerHour needs none of it: its title carries the tagline, which the base already reads.
+     */
+    tagline() {
+      return (
+        headingLike(
+          /^(?!.*\/hr)[A-Z][^$]{8,90}(Engineer|Developer|Designer|Consultant|Specialist|Manager|Architect|Writer|Marketer)/
+        ) || super.tagline()
+      );
+    }
+
+    /**
+     * Each role is one heading, "Software Engineer - III | Ebay". Splitting on the pipe is what
+     * separates the role from the employer; without it both collapse into one string.
+     *
+     * The base returns nothing, because a heading containing a pipe means "role | employer" here and
+     * means nothing anywhere else.
+     */
+    employment() {
+      return headingsMatching(/\|/).map((text) => {
+        const [role, company] = text.split("|").map(clean);
+        return { title: role || null, company: company || null };
+      });
+    }
+
+    /**
+     * Upwork puts two promotions inside the certifications section: an offer of Connects and a prompt
+     * to claim one. Connects are Upwork's own currency and exist on no other marketplace, so this
+     * filter was the clearest case of one site's vocabulary sitting in shared code.
+     */
+    certifications() {
+      return super.certifications().filter(
+        (text) => !/Earn \d+ Connects|Claim certification/i.test(text)
+      );
     }
 
     /**

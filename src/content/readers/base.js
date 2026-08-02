@@ -35,7 +35,7 @@
 globalThis.ALReaders ||= (() => {
   const {
     clean, structuredData, visibleText, absolute,
-    firstOf, headingLike, inSection, textOfAll,
+    firstOf, headingLike, inSection, meta, textOfAll,
   } = globalThis.ALExtractKit;
 
   class Reader {
@@ -89,6 +89,9 @@ globalThis.ALReaders ||= (() => {
         // Both marketplaces mark a skill chip with *some* class containing "token" or "skill". Matching
         // the substring rather than the exact name is what let PeoplePerHour work with no entry here.
         skillToken: "[class*='token'], [class*='skill']",
+        // Tried in order. Was a literal inside `readProfile` — the one field whose selector lived
+        // nowhere a marketplace could reach it.
+        profileAvatar: ['img[alt*="profile" i]', '[class*="avatar"] img'],
       };
     }
 
@@ -128,6 +131,30 @@ globalThis.ALReaders ||= (() => {
         // What a fixed-price page says when it is not hourly. Read from the page text, because the two
         // words are the only thing distinguishing the type on a site with no attribute for it.
         hourlyWord: "hourly|per hour|/hr",
+        // Both were bare regexes inside `readJob`, so a site saying "Payments verified" or listing
+        // "Quotes" instead of "Proposals" had no way to say so.
+        paymentVerified: "payment (method )?verified",
+        proposals: "Proposals",
+      };
+    }
+
+    /**
+     * The words a marketplace heads its profile sections with.
+     *
+     * The third map, beside `selectors` and `labels`, and the one that was missing: six section names
+     * were English literals inside the shared readers — "Skills", "Work history", "Certifications" —
+     * so a site that writes any of them differently lost that whole field with nothing to override.
+     *
+     * They are patterns, like `labels`: "Work history|Employment" is a legitimate value.
+     */
+    get sections() {
+      return {
+        skills: "Skills",
+        languages: "Languages",
+        portfolio: "Portfolio",
+        workHistory: "Work history",
+        education: "Education",
+        certifications: "Certifications",
       };
     }
 
@@ -283,10 +310,119 @@ globalThis.ALReaders ||= (() => {
      * that point the selector is the only thing keeping this honest.
      */
     skills() {
-      const scoped = inSection("Skills", this.selectors.skillToken)
+      const scoped = inSection(this.sections.skills, this.selectors.skillToken)
         .map((node) => clean(node.textContent))
         .filter(Boolean);
       return scoped.length ? [...new Set(scoped)] : textOfAll([this.selectors.skillToken], 60);
+    }
+
+    /**
+     * The skills on a *job* page — the selector first, then the section.
+     *
+     * Separate from `skills()` because the order is reversed: a job page that marks its skills is
+     * trusted over a heading, while a profile's chips are usually unmarked. Both used to be written
+     * out longhand in their own function, one of them twice.
+     */
+    jobSkills() {
+      const marked = textOfAll(this.sel("jobSkills"));
+      if (marked.length) return marked;
+      return [...new Set(
+        inSection(this.sections.skills, this.selectors.skillToken)
+          .map((node) => clean(node.textContent))
+          .filter(Boolean)
+      )].slice(0, 30);
+    }
+
+    languages() {
+      return [...new Set(
+        inSection(this.sections.languages, `li, ${this.selectors.skillToken}`)
+          .map((node) => clean(node.textContent))
+          .filter(Boolean)
+      )].slice(0, 20);
+    }
+
+    portfolio() {
+      return inSection(this.sections.portfolio, "a[href]")
+        .map((a) => ({
+          title: clean(a.getAttribute("aria-label") || a.textContent) || null,
+          url: absolute(a.getAttribute("href")),
+          image: absolute(a.querySelector("img")?.getAttribute("src")),
+        }))
+        .filter((entry) => entry.title || entry.image)
+        .slice(0, 25);
+    }
+
+    workHistory() {
+      return [...new Set(
+        inSection(this.sections.workHistory, "h4, h5, li")
+          .map((node) => clean(node.textContent))
+          .filter((text) => text && text.length > 3)
+      )]
+        .slice(0, 25)
+        .map((title) => ({ title }));
+    }
+
+    education() {
+      return [...new Set(
+        inSection(this.sections.education, "h4, h5, li").map((n) => clean(n.textContent)).filter(Boolean)
+      )]
+        .slice(0, 10)
+        .map((school) => ({ school }));
+    }
+
+    certifications() {
+      return [...new Set(
+        inSection(this.sections.certifications, "h4, h5, li")
+          .map((node) => clean(node.textContent))
+          .filter(Boolean)
+      )].slice(0, 20);
+    }
+
+    /**
+     * Past roles. Empty here, because there is no generic way to tell a job title from any other
+     * heading — the site that can tell says how in its own file.
+     */
+    employment() {
+      return [];
+    }
+
+    /** The line under the name. Generic: whatever the `<title>` carries. */
+    tagline() {
+      return this.fromTitle().tagline;
+    }
+
+    avatarUrl() {
+      for (const selector of this.sel("profileAvatar")) {
+        const src = document.querySelector(selector)?.src;
+        if (src) return absolute(src);
+      }
+      return meta("og:image");
+    }
+
+    /** Whether the client has a verified payment method — the words the site uses to say so. */
+    paymentVerified() {
+      return new RegExp(this.labels.paymentVerified, "i").test(this.text);
+    }
+
+    /** The bid count written into the page text, where no attribute marks it. */
+    proposalCount() {
+      const found = this.text.match(
+        new RegExp(`${this.labels.proposals}[^0-9]{0,40}(\\d+)\\s*(?:to|–|-)?\\s*(\\d+)?`, "i")
+      );
+      return found ? Number(found[2] || found[1]) : null;
+    }
+
+    /**
+     * A job title taken from the document title, with the marketplace's own name trimmed off it.
+     *
+     * The name comes from the platform entry, so this strips whichever site you are actually on. It
+     * used to be a regex naming Upwork, PeoplePerHour and Fiverr together, inside the function that
+     * runs for all three — a fourth marketplace would have silently kept its suffix.
+     */
+    jobTitleFallback() {
+      const site = this.platform?.label;
+      const title = document.title;
+      return clean(site ? title.replace(new RegExp(`\\s*[-|]\\s*${site}.*$`, "i"), "") : title);
     }
 
     /** The name, tagline and location a page's `<title>` carries. Generic: it carries none. */

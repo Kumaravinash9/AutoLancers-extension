@@ -1028,6 +1028,54 @@ console.log("\nthe handle comes from the platform that defines it:");
   check("readProfile asks the platform first", /platformForPage\?\.profileId\?\.\(url\) \|\|/.test(extract), true);
 }
 
+// The point of the move: a site can change one field without touching anyone else's. Asserted by
+// actually overriding the map and watching a different answer come back, not by checking a method
+// exists — a seam that is never exercised is a seam nobody knows is broken.
+console.log("\nper-platform field extraction:");
+{
+  await page.goto(pathToFileURL(new URL("fixtures/profile.html", import.meta.url).pathname).href);
+  const seam = await page.evaluate((code) => {
+    Object.defineProperty(window, "__href", {
+      value: "https://www.upwork.com/freelancers/~019abcdef123456789", configurable: true,
+    });
+    eval(code);
+    const { Reader } = globalThis.ALReaders;
+    const upwork = globalThis.ALPlatforms.PLATFORMS.upwork;
+
+    // A marketplace that heads the section differently reads a different section — nothing else moves.
+    // "Employment history" is an h3 like the sections around it; a deeper heading would not close the
+    // one before it, which is how the Portfolio block ends up containing the Work history headings.
+    class Renamed extends Reader {
+      get sections() {
+        return { ...super.sections, workHistory: "Employment history" };
+      }
+    }
+    const owns = (id, name) =>
+      Object.prototype.hasOwnProperty.call(globalThis.ALReaders.for(id).prototype, name);
+
+    return {
+      // The generic base makes no claim about past roles; Upwork's pipe heading is Upwork's alone.
+      baseEmployment: new Reader(upwork).employment(),
+      upworkEmployment: new (globalThis.ALReaders.for("upwork"))(upwork).employment().length,
+      // Renaming one section changes only that field.
+      renamedReadsEmployment: new Renamed(upwork).workHistory().map((w) => w.title),
+      defaultReadsWorkHistory: new Reader(upwork).workHistory().map((w) => w.title),
+      // Which marketplace declares what, so a move away from a file is visible here.
+      declaredByUpwork: ["tagline", "employment", "certifications", "rateText"].filter((n) => owns("upwork", n)),
+      declaredByPph: ["selectors", "labels", "loginSigns"].filter((n) => owns("peopleperhour", n)),
+    };
+  }, src.replace(/location\.href/g, "window.__href"));
+
+  check("the base claims no employment; Upwork reads its own", [seam.baseEmployment, seam.upworkEmployment > 0], [[], true]);
+  check("renaming a section reads that section instead", seam.renamedReadsEmployment,
+        ["Software Engineer - III | Ebay", "Software Engineer - II | InMobi", "Software Engineer - II | Deutsche Bank"]);
+  check("and leaves the default alone", seam.defaultReadsWorkHistory,
+        ["Next.js dashboard for logistics", "FastAPI migration"]);
+  check("Upwork declares the fields that are its markup", seam.declaredByUpwork,
+        ["tagline", "employment", "certifications", "rateText"]);
+  check("PeoplePerHour declares only maps", seam.declaredByPph, ["selectors", "labels", "loginSigns"]);
+}
+
 await browser.close();
 console.log(failures ? `\n${failures} failing` : "\nall checks passed");
 process.exit(failures ? 1 : 0);
