@@ -32,6 +32,12 @@
       return {
         ...base,
         profileRate: [".member-cost", ...base.profileRate],
+        // Skills are links into its own freelancer search, not chips: `.widget-tag-list` holding
+        // `a.tag-item` pointing at /hire-freelancers?skills=…. Neither class contains "token" or
+        // "skill", so the generic selector matched nothing and profiles came back with no skills at
+        // all. Scoped to the container on purpose — `.tag-item` alone would also collect category tags
+        // elsewhere on the page.
+        skillToken: `.widget-tag-list .tag-item, ${base.skillToken}`,
       };
     }
 

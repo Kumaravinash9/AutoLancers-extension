@@ -47,10 +47,26 @@
   </section>
 
   <section>
+    <!--
+      The real thing. Skills are links into PeoplePerHour's own freelancer search, not chips, and
+      neither class name contains "token" or "skill" — so the generic selector matched nothing and
+      every PPH profile came back with an empty skills list while this fixture's invented
+      `class="skill-token"` spans kept the test green.
+
+      The tag list is verbatim. The heading above it is not — the paste started at the div, and what
+      labels that block on the live page has not been seen. It is written back because dropping it
+      changed a different answer: with no heading between them, the Languages section had no lower
+      boundary and swallowed all four skill links, so `languages` came back six entries long. That is
+      a real risk, not a fixture artefact — if the live block carries no heading, or carries a word
+      other than "Skills", the same bleed happens in production.
+
+      The extraction survives either way: `.widget-tag-list .tag-item` answers through the unscoped
+      sweep when the scoped path finds no section. It is the neighbouring readers that depend on a
+      boundary being there.
+    -->
     <h2>Skills</h2>
-    <span class="skill-token">Next.js</span>
-    <span class="skill-token">PostgreSQL</span>
-    <span class="skill-token">Django</span>
+    <div class="clearfix widget-tag-list">
+                            <a class="tag-item small" href="/hire-freelancers?skills=artificial+intelligence+%2F+ai">Artificial Intelligence / AI</a><a class="tag-item small" href="/hire-freelancers?skills=back+end+developer">Back end developer</a><a class="tag-item small" href="/hire-freelancers?skills=website+development">Website development</a><a class="tag-item small" href="/hire-freelancers?skills=ai+chatbot+development">AI Chatbot Development</a>                        </div>
   </section>
 
   <section>

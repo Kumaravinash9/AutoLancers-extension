@@ -354,14 +354,21 @@ function headingLike(regex) {
 /**
  * The shared helpers the reader classes need, published for the files that hold them.
  *
- * Four of them, out of the thousand-odd lines here. That ratio is the argument for the split being
- * where it is: the readers live in their own files because each marketplace's DOM is its own problem,
- * while the machinery for walking a DOM is not per-marketplace at all and stays put.
+ * Eight of them, out of the thousand-odd lines here. That ratio is still the argument for the split
+ * being where it is: the readers live in their own files because each marketplace's DOM is its own
+ * problem, while the machinery for walking a DOM is not per-marketplace at all and stays put.
+ *
+ * The last four joined when finding a rate and finding a skill chip moved onto the readers. Both were
+ * written from one site's markup and applied to all of them, which is the failure this whole split
+ * exists to prevent — a site's answer must be changeable without touching anyone else's.
  *
  * Published before `readers/*.js` are evaluated — `executeScript({files})` runs them in the order
  * given, and the injection lists in `popup.js` and `worker.js` put this file first.
  */
-globalThis.ALExtractKit = { clean, structuredData, visibleText, absolute };
+globalThis.ALExtractKit = {
+  clean, structuredData, visibleText, absolute,
+  firstOf, headingLike, inSection, textOfAll,
+};
 
 /**
  * The reader for whichever marketplace this page belongs to.
@@ -542,15 +549,11 @@ function readProfile() {
     me.labels[name] ? nearLabel(me.labels[name], { ...opts, text: me.text }) : null;
   const titled = me.fromTitle();
 
-  // "$20.00/hr" is its own heading with nothing else identifying it, so match the shape.
-  const rateText = sel("profileRate") || headingLike(/^[$£€₹][\d,.]+\s*\/\s*hr/i);
-
-  const skills = (() => {
-    const scoped = inSection("Skills", me.selectors.skillToken)
-      .map((n) => clean(n.textContent))
-      .filter(Boolean);
-    return scoped.length ? [...new Set(scoped)] : textOfAll([me.selectors.skillToken], 60);
-  })();
+  // Both asked of the reader, because both answers are a marketplace's own markup. Upwork prints its
+  // rate as a bare heading and PeoplePerHour tags its skills as filter links; neither site's trick
+  // works on the other, and neither belongs in a function that runs for all of them.
+  const rateText = me.rateText();
+  const skills = me.skills();
 
   return {
     platform: me.platform?.id || "unknown",

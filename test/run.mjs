@@ -563,7 +563,10 @@ console.log("\nPeoplePerHour profile (no per-site code at all):");
   check("jobs and hours", [pr.total_jobs, pr.total_hours], [134, 2410]);
   // Briefly 2410: a character window treated the hours on the line above as adjacent to "reviews".
   check("reviews, not the hours on the line above", pr.total_reviews, 96);
-  check("skills without a token class of ours", pr.skills, ["Next.js", "PostgreSQL", "Django"]);
+  // Filter links into PPH's own search, declared in its reader. No class here contains "token" or
+  // "skill" and there is no "Skills" heading to scope to, so both generic routes come back empty.
+  check("skills from the site's own tag links", pr.skills,
+        ["Artificial Intelligence / AI", "Back end developer", "Website development", "AI Chatbot Development"]);
   check("languages", pr.languages, ["English: Native", "Hindi: Conversational"]);
   check("portfolio titles from aria-label", pr.portfolio.map((x) => x.title), ["Freight exception dashboard", "Invoice reconciliation service"]);
   check("portfolio urls absolute", pr.portfolio[0].url, "https://www.peopleperhour.com/freelancer/priya-r/portfolio/1");

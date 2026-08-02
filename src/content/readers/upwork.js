@@ -11,7 +11,7 @@
  * base's generic lists rather than replacing them — a rename degrades to the fallback, not to nothing.
  */
 (() => {
-  const { clean } = globalThis.ALExtractKit;
+  const { clean, headingLike } = globalThis.ALExtractKit;
 
   class UpworkReader extends globalThis.ALReaders.Reader {
 
@@ -52,6 +52,19 @@
         ...super.challengeSigns,
         /there was an error loading this page|please contact customer support/i,
       ];
+    }
+
+    /**
+     * Upwork prints the rate as its own heading — "$20.00/hr" — with nothing else identifying it.
+     *
+     * No itemprop, no label, no class that survives a redesign: the only thing that marks it is the
+     * shape of the text. This lived in the shared reader for a while and was the only thing finding
+     * Upwork's rate, which meant a rule written from one site's DOM ran against every site.
+     *
+     * After `super`, so a future itemprop wins over guessing from shape.
+     */
+    rateText() {
+      return super.rateText() || headingLike(/^[$£€₹][\d,.]+\s*\/\s*hr/i);
     }
 
     /**

@@ -33,7 +33,10 @@
  * with three dependencies is not worth duplicating a thousand lines of utilities for.
  */
 globalThis.ALReaders ||= (() => {
-  const { clean, structuredData, visibleText, absolute } = globalThis.ALExtractKit;
+  const {
+    clean, structuredData, visibleText, absolute,
+    firstOf, headingLike, inSection, textOfAll,
+  } = globalThis.ALExtractKit;
 
   class Reader {
     constructor(platform) {
@@ -259,6 +262,31 @@ globalThis.ALReaders ||= (() => {
      */
     isLoginUrl(url) {
       return Boolean(url) && this.loginSigns.some((sign) => sign.test(url));
+    }
+
+    /**
+     * The text carrying the hourly rate — "$12/hr", "£45.00/hr".
+     *
+     * Generic: whatever the site marks as a price. A marketplace that prints its rate somewhere no
+     * markup identifies says so in its own file, which is what Upwork does.
+     */
+    rateText() {
+      return firstOf(this.sel("profileRate"));
+    }
+
+    /**
+     * The skills listed on a profile.
+     *
+     * Scoped to a "Skills" section first, because a chip selector loose enough to match every site is
+     * also loose enough to match related-search links and category tags elsewhere on the page. The
+     * unscoped sweep is the fallback for a site that gives the section no heading — capped, since at
+     * that point the selector is the only thing keeping this honest.
+     */
+    skills() {
+      const scoped = inSection("Skills", this.selectors.skillToken)
+        .map((node) => clean(node.textContent))
+        .filter(Boolean);
+      return scoped.length ? [...new Set(scoped)] : textOfAll([this.selectors.skillToken], 60);
     }
 
     /** The name, tagline and location a page's `<title>` carries. Generic: it carries none. */
