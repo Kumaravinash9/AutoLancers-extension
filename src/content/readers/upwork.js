@@ -11,7 +11,7 @@
  * base's generic lists rather than replacing them — a rename degrades to the fallback, not to nothing.
  */
 (() => {
-  const { clean, headingLike, headingsMatching } = globalThis.ALExtractKit;
+  const { clean, headingLike, inSection } = globalThis.ALExtractKit;
 
   class UpworkReader extends globalThis.ALReaders.Reader {
 
@@ -69,6 +69,14 @@
         // which are worth having but have nowhere to go — the field is a list of school names — and
         // matching them here would file each one as a separate school.
         sectionEntry: `strong[role='presentation'], strong.mb-0, ${base.sectionEntry}`,
+        // The Connects balance, in a sidebar card whose heading holds both the word and the number:
+        // `<h3>Connects: 0</h3>`. Anchored on the two `data-test` names rather than the heading level,
+        // since `h5` here is a class and `h3` is the tag — those disagree on purpose in Upwork's own
+        // markup, and picking either one would be picking the wrong one eventually.
+        profileConnects: [
+          '[data-test="sidebar-connects-card"] h3',
+          '[data-test="connects-section"] h3',
+        ],
       };
     }
 
@@ -85,6 +93,37 @@
         ...super.challengeSigns,
         /there was an error loading this page|please contact customer support/i,
       ];
+    }
+
+    /**
+     * The linked-accounts card, which lists two different things in one place.
+     *
+     * A linked account is a `.title` with a `.since` and a `.username` beside it. An *unlinked* one is
+     * a `<button>` holding a bare span — StackOverflow appears exactly like that when it has not been
+     * connected — so anything that reads the card's text, or sweeps it for provider names, reports an
+     * account the person does not have. Keying on `.title` is what separates them: the button carries
+     * no such class, so it drops out without needing to be recognised.
+     *
+     * `data-qa` rather than a class, because the classes here are layout (`span-8`, `py-4x`) and the
+     * one durable-looking name on the card is that attribute.
+     */
+    linkedAccounts() {
+      const card = document.querySelector('[data-qa="linked-accounts"]');
+      if (!card) return [];
+      return [...card.querySelectorAll(".title")]
+        .map((title) => {
+          // The grid cell holding this account's own fields, so two linked accounts cannot borrow
+          // each other's username.
+          const cell = title.closest("[class*='span-']") || title.parentElement;
+          const since = clean(cell?.querySelector(".since")?.textContent || "").replace(/^since\s*/i, "");
+          return {
+            provider: clean(title.textContent) || null,
+            username: clean(cell?.querySelector(".username")?.textContent || "") || null,
+            since: /^\d{4}$/.test(since) ? Number(since) : since || null,
+          };
+        })
+        .filter((account) => account.provider)
+        .slice(0, 10);
     }
 
     /**
@@ -105,17 +144,69 @@
     }
 
     /**
-     * Each role is one heading, "Software Engineer - III | Ebay". Splitting on the pipe is what
-     * separates the role from the employer; without it both collapse into one string.
+     * Each role is one heading — "Software Engineer - III | Ebay" — above its dates and a clamped
+     * description. Splitting on the pipe separates the role from the employer; without it both
+     * collapse into one string. The base returns nothing, because a pipe in a heading means that here
+     * and means nothing anywhere else.
      *
-     * The base returns nothing, because a heading containing a pipe means "role | employer" here and
-     * means nothing anywhere else.
+     * Scoped to the Employment history section rather than swept from the whole page. The sweep it
+     * replaces looked for *any* heading containing a pipe, so a portfolio piece or a certificate named
+     * with one would have been filed as a job — and the entry's dates and summary, which sit beside
+     * the heading rather than in it, were unreachable that way.
      */
     employment() {
-      return headingsMatching(/\|/).map((text) => {
-        const [role, company] = text.split("|").map(clean);
-        return { title: role || null, company: company || null };
-      });
+      return inSection(this.sections.employment, "h4")
+        .map((heading) => {
+          const [role, company] = clean(heading.textContent).split("|").map(clean);
+          // The entry's own card, so three jobs cannot borrow each other's dates.
+          const card = heading.closest("[class*='card-section']") || heading.parentElement;
+          const period = clean(card?.querySelector(".text-light-on-inverse")?.textContent || "");
+          const summary = clean(card?.querySelector(".text-pre-line")?.textContent || "");
+          return {
+            title: role || null,
+            company: company || null,
+            period: period || null,
+            summary: summary || null,
+          };
+        })
+        .filter((role) => role.title)
+        .slice(0, 25);
+    }
+
+    /**
+     * Other experiences, which on most profiles is an empty prompt rather than a list.
+     *
+     * The empty state is a card holding an illustration, the line "Add any other experiences that help
+     * you stand out" and an "Add an experience" button — no entry, and nothing saying so except the
+     * absence of a heading. Anything that read this card's text would file Upwork's own encouragement
+     * as something the freelancer has done, which is the same mistake as reading a "Show more" label
+     * as a job title.
+     *
+     * Keying on the entry heading is what makes the empty state answer nothing without needing to be
+     * recognised: there is no h4 in it at all. No pipe splitting here — these are not role/employer
+     * pairs.
+     */
+    otherExperiences() {
+      return inSection(this.sections.otherExperiences, "h4")
+        .map((heading) => {
+          const card = heading.closest("[class*='card-section']") || heading.parentElement;
+          const summary = clean(card?.querySelector(".text-pre-line")?.textContent || "");
+          return { title: clean(heading.textContent) || null, summary: summary || null };
+        })
+        .filter((entry) => entry.title)
+        .slice(0, 25);
+    }
+
+    /**
+     * Upwork shows three jobs and hides the rest behind "Show more (2)", with the count in its own
+     * element. The hidden entries are not in the DOM at all, so reading three and reporting them as
+     * the whole history is the failure this number exists to prevent.
+     */
+    employmentHidden() {
+      const count = document.querySelector('[data-testid="show-more-count"]');
+      if (!count) return null;
+      const found = clean(count.textContent).match(/\d+/);
+      return found ? Number(found[0]) : null;
     }
 
     /**

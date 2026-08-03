@@ -35,7 +35,7 @@
 globalThis.ALReaders ||= (() => {
   const {
     clean, structuredData, visibleText, absolute,
-    firstOf, headingLike, inSection, meta, textOfAll,
+    firstOf, headingLike, inSection, meta, textOfAll, toNumber,
   } = globalThis.ALExtractKit;
 
   class Reader {
@@ -96,6 +96,9 @@ globalThis.ALReaders ||= (() => {
         // Was written out as a literal in three readers, so a site that marks its entries any other
         // way lost all three fields at once with nowhere to say so.
         sectionEntry: "h4, h5, li",
+        // Empty because bidding credits are not a general marketplace idea — Upwork sells Connects,
+        // PeoplePerHour gives monthly proposals, Fiverr has none at all. A site that has them says so.
+        profileConnects: [],
       };
     }
 
@@ -157,6 +160,8 @@ globalThis.ALReaders ||= (() => {
         languages: "Languages",
         portfolio: "Portfolio",
         workHistory: "Work history",
+        employment: "Employment history",
+        otherExperiences: "Other experiences",
         education: "Education",
         certifications: "Certifications",
       };
@@ -390,6 +395,26 @@ globalThis.ALReaders ||= (() => {
       return [];
     }
 
+    /**
+     * Anything the freelancer lists that is neither a job nor a degree.
+     *
+     * Empty here for the same reason as `employment`: which element is an entry is the site's markup.
+     */
+    otherExperiences() {
+      return [];
+    }
+
+    /**
+     * How many employment entries the page is holding back behind a "show more" control.
+     *
+     * Null where nothing is hidden or the site has no such control. It exists because the alternative
+     * is filing three jobs out of five and calling the profile complete — the collector does not click
+     * anything, so the rest genuinely cannot be read, and saying so is the only honest option.
+     */
+    employmentHidden() {
+      return null;
+    }
+
     /** The line under the name. Generic: whatever the `<title>` carries. */
     tagline() {
       return this.fromTitle().tagline;
@@ -401,6 +426,29 @@ globalThis.ALReaders ||= (() => {
         if (src) return absolute(src);
       }
       return meta("og:image");
+    }
+
+    /**
+     * External accounts the freelancer has proven they own — a GitHub, a StackOverflow.
+     *
+     * Empty here, and not merely for want of a selector: the card interleaves accounts that *are*
+     * linked with buttons offering to link ones that are not, and telling those apart is reading a
+     * specific site's markup rather than a shape. A marketplace that has the idea implements it.
+     */
+    linkedAccounts() {
+      return [];
+    }
+
+    /**
+     * Bidding credits the account currently holds, or null where the marketplace has no such thing.
+     *
+     * Null and zero are different answers and both are real: null means this site does not sell
+     * credits, zero means you have run out and cannot bid until you buy more. Collapsing them would
+     * make an empty wallet look like a site that never had one.
+     */
+    connectsBalance() {
+      const text = firstOf(this.sel("profileConnects"));
+      return text === null ? null : toNumber(text);
     }
 
     /** Whether the client has a verified payment method — the words the site uses to say so. */

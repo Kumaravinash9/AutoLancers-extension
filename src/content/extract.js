@@ -332,8 +332,22 @@ function sectionNodes(pattern) {
   const rank = Number(start.tagName[1]);
   const stop = headings.slice(index + 1).find((node) => Number(node.tagName[1]) <= rank) || null;
 
+  /**
+   * A section also ends where the card holding it ends.
+   *
+   * Rank alone is not enough: it closes a section at the next heading of the same or higher level, so
+   * anything headed *deeper* is swallowed however far away it sits. A `<h5>Linked accounts</h5>` card
+   * two blocks below "Employment history" was read as a fourth job, because h5 never closes an h3.
+   *
+   * Deeper headings genuinely belong to a section — a Work history h4 holds h5 entries, and closing on
+   * any heading at all would empty that field — so the boundary has to come from the markup instead.
+   * The enclosing `section` or `article` is that boundary where a page provides one, and where it does
+   * not this behaves exactly as before rather than guessing at `div` nesting.
+   */
+  const container = start.closest("section, article") || document.body;
+
   const out = [];
-  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_ELEMENT);
   let inRange = false;
   let node;
   while ((node = walker.nextNode())) {
@@ -375,7 +389,7 @@ function headingLike(regex) {
 /**
  * The shared helpers the reader classes need, published for the files that hold them.
  *
- * Ten of them, out of the thousand-odd lines here. That ratio is still the argument for the split
+ * Eleven of them, out of the thousand-odd lines here. That ratio is still the argument for the split
  * being where it is: the readers live in their own files because each marketplace's DOM is its own
  * problem, while the machinery for walking a DOM is not per-marketplace at all and stays put.
  *
@@ -388,7 +402,7 @@ function headingLike(regex) {
  */
 globalThis.ALExtractKit = {
   clean, structuredData, visibleText, absolute,
-  firstOf, headingLike, headingsMatching, inSection, meta, textOfAll,
+  firstOf, headingLike, headingsMatching, inSection, meta, textOfAll, toNumber,
 };
 
 /**
@@ -609,12 +623,25 @@ function readProfile() {
     total_jobs: toNumber(label("totalJobs")),
     total_hours: toNumber(label("totalHours")),
 
+    // Bidding credits in hand. Upwork calls them Connects and charges some per proposal, so this is
+    // how many bids the account can still afford — the balance, not the per-job price, which is read
+    // on the job page as `connects_required`.
+    connects_balance: me.connectsBalance(),
+
+    // Accounts the freelancer has proven they own. Only the ones actually linked — the same card
+    // advertises the ones they have not connected, and those are not facts about them.
+    linked_accounts: me.linkedAccounts(),
+
     skills,
 
     portfolio: me.portfolio(),
 
     work_history: me.workHistory(),
     employment: me.employment(),
+    // Non-null when the page is holding entries back behind a "show more" the collector does not
+    // click. Three jobs out of five, filed as the whole history, is worse than saying two are missing.
+    employment_hidden: me.employmentHidden(),
+    other_experiences: me.otherExperiences(),
     education: me.education(),
     certifications: me.certifications(),
   };

@@ -118,18 +118,40 @@ check("portfolio titles", profile.portfolio.map((p) => p.title), ["AI-Powered DE
 check("portfolio urls absolute", profile.portfolio[0].url.endsWith("/freelancers/~01/p/1"), true);
 check("work history", profile.work_history.map((w) => w.title), ["Next.js dashboard for logistics", "FastAPI migration"]);
 check(
-  "employment split on the pipe",
-  profile.employment,
+  "employment: role, employer, dates and description",
+  profile.employment.map((e) => [e.title, e.company, e.period, (e.summary || "").slice(0, 28)]),
   [
-    { title: "Software Engineer - III", company: "Ebay" },
-    { title: "Software Engineer - II", company: "InMobi" },
-    { title: "Software Engineer - II", company: "Deutsche Bank" },
+    ["Software Engineer - III", "Ebay", "June 2026 - Present", "- Working as an AI & Backend"],
+    ["Software Engineer - II", "InMobi", "June 2025 - May 2026", "- Working as a Backend Engin"],
+    ["Software Engineer - II", "Deutsche Bank", "July 2022 - June 2025", "- Designed and built automat"],
   ]
 );
+// The whole point of the fixture: two more jobs exist behind "Show more (2)" and are not in the DOM.
+// Three filed as the complete history is the failure that looks like success.
+check("the jobs behind Show more are counted, not ignored", profile.employment_hidden, 2);
+// The empty Other experiences card holds Upwork's own encouragement and a button. Neither is a thing
+// this person has done.
+check("an empty other-experiences card yields nothing", profile.other_experiences, []);
+// Excluding page_text, which is the raw page handed to the model on purpose and contains everything
+// on it. The claim is about the structured fields — those are what the backend stores as fact.
+{
+  const { page_text, ...structured } = profile;
+  check("and its prompt text reaches no structured field",
+        JSON.stringify(structured).includes("help you stand out"), false);
+}
 check("certifications skip the popover upsell", profile.certifications, ["AWS Solutions Architect"]);
 // The bug this replaced: an "Education" item in the sidebar checklist pulled every nav heading in.
 // The <strong> entry, not the <h4>Education</h4> decoy sitting in the sidebar checklist above it —
 // which is what this field used to report, and which is why the nav is filtered as page furniture.
+// Zero, not null: the account has run out and cannot bid. A site with no such concept reports null,
+// and the two must stay distinguishable — see the PeoplePerHour assertion below.
+check("connects balance is the number in the sidebar card", profile.connects_balance, 0);
+// Only what is actually linked. The same card offers StackOverflow, which this account has not
+// connected — reporting it would put an account on the profile that does not exist.
+check("linked accounts", profile.linked_accounts,
+      [{ provider: "GitHub", username: "Avinash Kumar", since: 2020 }]);
+check("the unlinked offer is not reported as an account",
+      profile.linked_accounts.some((a) => /stackoverflow/i.test(a.provider)), false);
 check("education from the bold entry, not the sidebar decoy",
       profile.education.map((e) => e.school), ["Institute of Technology (IIT) (BHU), Varanasi"]);
 // The degree and the years sit in two divs under that strong. They are deliberately not collected:
@@ -594,6 +616,9 @@ console.log("\nPeoplePerHour profile (no per-site code at all):");
   check("work history", pr.work_history.map((w) => w.title), ["Reporting dashboard for a freight operator", "Stripe reconciliation rebuild"]);
   check("education", pr.education.map((e) => e.school), ["BSc Computer Science, University of Manchester"]);
   check("its own profile, by slug", pr.is_own, true);
+  // Null, not zero. PeoplePerHour sells no bidding credits, and an empty Upwork wallet must not look
+  // the same as a marketplace that never had one.
+  check("no connects concept reports null, not zero", pr.connects_balance, null);
 }
 
 console.log("\nthe reader hierarchy:");

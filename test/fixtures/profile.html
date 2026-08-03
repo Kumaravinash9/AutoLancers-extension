@@ -26,6 +26,22 @@
 -->
 <div id="air3-line-clamp-25" tabindex="-1" class="air3-line-clamp is-clamped"><span data-v-4ed0959c="" class="text-body text-pre-line break">I am an AI, Backend, and Platform Engineer with 4+ years of experience designing scalable distributed systems, AI-powered applications, and cloud-native backend infrastructure. I graduated from IIT (BHU), Varanasi and specialize in RAG, LLM agents, computer vision, vector databases, workflow orchestration, microservices, and high-performance APIs. I have worked with Google, Deutsche Bank, InMobi, and am currently a Senior Software Engineer at eBay, building production-grade systems for enterprise and large-scale consumer applications. I enjoy designing reliable, low-latency, and highly scalable systems that solve complex engineering challenges, from AI platforms to distributed backend services. Always looking for the next complex engineering problem to solve.</span></div>
 
+<!--
+  The Connects card, verbatim. Note the heading disagrees with itself: it is an <h3> carrying the class
+  "h5", which is why the selector anchors on the two data-test names instead of the heading level.
+  Zero is the real value from the account this was taken from, and it is the interesting one — a
+  balance of zero means no bids can be sent, which must not read the same as a site with no Connects.
+-->
+<div data-v-338da2b3="" data-test="sidebar-connects-card" class="air3-card bg-muted-light air3-card-sections p-6x mb-6x mb-lg-0 nmt-6x" data-v-4ed0959c=""><div data-v-338da2b3="" data-test="connects-section" class="air3-card-section p-0"><h3 data-v-338da2b3="" class="mb-0 h5 d-flex align-items-center">
+      Connects:
+      
+        0
+      </h3> <div data-v-338da2b3="" data-test="content" class="pt-6x d-flex connects-links justify-content-between"><a data-v-338da2b3="" href="/nx/plans/connects/history" class="up-n-link air3-btn-link-secondary-alt">
+        View details
+      </a> <span data-v-338da2b3="" class="text-gray-70 mx-2x text-muted">|</span> <a data-v-338da2b3="" href="/nx/plans/connects/buy?from=flProfile" class="up-n-link air3-btn-link-secondary-alt">
+          Buy Connects
+        </a></div></div></div>
+
 <section class="air3-card">
   <h4>Skills</h4>
   <span class="air3-token">Python</span>
@@ -45,12 +61,63 @@
   <h5>FastAPI migration</h5>
 </section>
 
-<section class="air3-card">
-  <h3>Employment history</h3>
-  <h4>Software Engineer - III | Ebay</h4>
-  <h4>Software Engineer - II | InMobi</h4>
-  <h4>Software Engineer - II | Deutsche Bank</h4>
-</section>
+<!--
+  Employment history, structurally verbatim (svg path data removed). Each entry is an h4 holding
+  "Role | Employer", with the dates and a clamped description in sibling divs rather than inside it —
+  which is why a sweep for headings containing a pipe could get the title and never the rest.
+
+  The "Show more (2)" at the end is the point of this fixture. Two further jobs exist and are not in
+  the DOM, so reading the three that are and reporting them as the whole history is wrong in the way
+  that looks right.
+-->
+<div data-v-4ed0959c="" class="air3-card-section"><div data-v-4ed0959c="" class="d-flex align-items-center"><div data-v-4ed0959c="" class="flex-1"><h3 data-v-4ed0959c="" class="mb-0">
+              Employment history
+            </h3></div> <div data-v-4ed0959c=""><button data-v-4ed0959c="" aria-label="Add employment history" class="air3-btn air3-btn-secondary air3-btn-circle air3-btn-sm"><div data-v-4ed0959c="" class="air3-icon sm"></div></button></div></div> <section data-v-4ed0959c="" class="air3-card-sections"><div data-v-4ed0959c=""><div class="air3-card-section px-0"><div class="d-flex"><div class="flex-1"><h4 role="presentation" class="my-0">
+          Software Engineer - III | Ebay
+        </h4></div> <div><button aria-label="Edit Software Engineer - III | Ebay Employment history item" class="air3-btn air3-btn-secondary air3-btn-circle air3-btn-sm ml-3x"></button> <button aria-label="Delete Software Engineer - III | Ebay Employment history item" class="air3-btn air3-btn-secondary air3-btn-circle air3-btn-sm ml-3x"></button></div></div> <div class="mt-3x text-light-on-inverse">
+      June 2026
+      -
+      Present</div> <div data-ev-sublocation="!line_clamp" class="air3-line-clamp-wrapper mt-3x" style="--lines: 3;"><!----> <div id="air3-line-clamp-6" tabindex="-1" class="air3-line-clamp is-clamped"><span class="text-pre-line break text-light">
+        -  Working as an AI &amp; Backend Engineer , building and scaling core preference and profile infrastructure serving 134M+ active users , enabling seamless cross-platform continuity across Android, iOS, and Web.
+  - Engineered high-throughput, low-latency pipelines to generate and serve profile embeddings for downstream  ML models , enabling predictive personalization and improving user experience at scale.
+      </span></div> <button aria-expanded="false" aria-controls="air3-line-clamp-6" type="button" data-ev-label="line_clamp_toggle" data-ev-open="false" class="air3-btn-link-secondary"><!----> <span><span>more</span> <!----></span></button></div></div><div class="air3-card-section px-0"><div class="d-flex"><div class="flex-1"><h4 role="presentation" class="my-0">
+          Software Engineer - II | InMobi
+        </h4></div> <div><button aria-label="Edit Software Engineer - II | InMobi Employment history item" class="air3-btn air3-btn-secondary air3-btn-circle air3-btn-sm ml-3x"></button> <button aria-label="Delete Software Engineer - II | InMobi Employment history item" class="air3-btn air3-btn-secondary air3-btn-circle air3-btn-sm ml-3x"></button></div></div> <div class="mt-3x text-light-on-inverse">
+      June 2025
+      -
+
+        May 2026
+      </div> <div data-ev-sublocation="!line_clamp" class="air3-line-clamp-wrapper mt-3x" style="--lines: 3;"><!----> <div id="air3-line-clamp-7" tabindex="-1" class="air3-line-clamp is-clamped"><span class="text-pre-line break text-light">
+        -  Working as a Backend Engineer , building scalable systems to improve developer workflows, system  observability, and reliability across high-scale distributed services having handling  5K+ builds/day    , 8K+ deployments/day , and 2M+ metrics/day
+  -  Built asynchronous workflow orchestration services  for regression testing, enabling artifact reuse, concurrency control, and policy enforcement (security, timeouts), reducing  CI runtime at scale.
+      </span></div> <button aria-expanded="false" aria-controls="air3-line-clamp-7" type="button" class="air3-btn-link-secondary"><span><span>more</span></span></button></div></div><div class="air3-card-section px-0"><div class="d-flex"><div class="flex-1"><h4 role="presentation" class="my-0">
+          Software Engineer - II | Deutsche Bank
+        </h4></div> <div><button aria-label="Edit Software Engineer - II | Deutsche Bank Employment history item" class="air3-btn air3-btn-secondary air3-btn-circle air3-btn-sm ml-3x"></button> <button aria-label="Delete Software Engineer - II | Deutsche Bank Employment history item" class="air3-btn air3-btn-secondary air3-btn-circle air3-btn-sm ml-3x"></button></div></div> <div class="mt-3x text-light-on-inverse">
+      July 2022
+      -
+
+        June 2025
+      </div> <div data-ev-sublocation="!line_clamp" class="air3-line-clamp-wrapper mt-3x" style="--lines: 3;"><!----> <div id="air3-line-clamp-8" tabindex="-1" class="air3-line-clamp is-clamped"><span class="text-pre-line break text-light">
+        -  Designed and built automated  distributed job scheduler  named Housekeeping Service, enabling  the  efficient deletion of 14 million archived records across multiple services within 6 hours.
+      </span></div> <button aria-expanded="false" aria-controls="air3-line-clamp-8" type="button" class="air3-btn-link-secondary"><span><span>more</span></span></button></div></div> <div class="air3-card-section px-0"><button data-testid="show-more" class="air3-btn air3-btn-link p-0 m-0">
+      Show more
+      <span data-testid="show-more-count" class="text-light-on-inverse">
+        (2)
+      </span></button></div></div></section></div>
+
+<!--
+  Other experiences, empty — which is how most profiles have it. The card holds an illustration,
+  Upwork's own encouragement ("Add any other experiences that help you stand out") and a button. There
+  is no entry and nothing marking its absence, so anything reading the card's text would file that
+  prompt as something the freelancer has done.
+-->
+<div data-v-4ed0959c="" class="air3-card-section"><div data-v-4ed0959c="" class="d-flex align-items-center"><div data-v-4ed0959c="" class="flex-1"><h3 data-v-4ed0959c="" class="mb-0">
+              Other experiences
+            </h3></div> <div data-v-4ed0959c=""><button data-v-4ed0959c="" aria-label="Add other experiences" class="air3-btn air3-btn-secondary air3-btn-circle air3-btn-sm"></button></div></div> <section data-v-4ed0959c="" class="air3-card-sections"><div data-v-4ed0959c="" class="air3-card-section text-center pt-0 px-0"><div class="air3-grid-container pt-0"><div class="span-12"><div class="air3-illustration my-6x"></div> <div role="presentation" class="mt-0 mb-3x">
+        Add any other experiences that help you stand out
+      </div> <!----> <button aria-label="Add an experience" class="air3-btn-link">
+        Add an experience
+      </button> <!----></div></div></div></section></div>
 
 <!--
   A real education entry: a <strong> above two plain divs, no heading and no list item anywhere. The
@@ -61,6 +128,34 @@
   It used to be scraped as the education itself, so this section now has to beat it rather than merely
   exist.
 -->
+<!--
+  The linked-accounts card, verbatim apart from the svg path data. It lists two different things: a
+  GitHub account that *is* linked, and a StackOverflow button offering to link one that is not. Reading
+  the card's text, or sweeping it for provider names, reports an account the person does not have.
+
+  The only thing separating them is that a linked account carries `.title`; the button holds a bare
+  span. Class names here are layout — span-8, py-4x, mb-3x — so the selector anchors on data-qa.
+-->
+<div data-v-7bffef5a="" data-v-4ed0959c=""><h5 data-v-7bffef5a="" role="presentation" class="mb-3x">
+    Linked accounts
+  </h5> <div data-v-7bffef5a="" data-qa="linked-accounts" class="profile-linked-accounts air3-card air3-card-sections py-1x px-4x"><!----> <div data-v-7bffef5a="" class="py-4x"><div data-v-396e9190="" data-v-7bffef5a="" class="px-0 pt-0"><div data-v-396e9190="" class="air3-grid-container gap-0"><div data-v-396e9190="" class="span-8"><span data-v-396e9190="" class="title">
+        GitHub
+        </span> <span data-v-396e9190="" class="since">
+        Since
+        2020
+      </span> <div data-v-396e9190="" class="air3-grid-container"><div data-v-396e9190="" class="span-12 username">
+          Avinash Kumar
+        </div></div></div> <div data-v-396e9190="" class="span-4 text-right avatar"><img data-v-396e9190="" src="https://avatars.githubusercontent.com/u/64456168?v=4" alt="Avinash Kumar" referrerpolicy="no-referrer" class="air3-avatar"></div> <div data-v-396e9190="" class="span-12 view-profile d-flex align-items-center mt-4x"><a data-v-396e9190="" href="javascript:" class="up-n-link no-underline">
+        View profile
+      </a></div> <div data-v-396e9190="" class="span-12 followers d-flex align-items-center mt-4x">
+      12
+      followers
+    </div> <div data-v-396e9190="" class="span-12 revoke-link mt-4x"><a data-v-396e9190="" href="javascript:" class="up-n-link no-underline">
+        Unlink
+      </a></div></div></div> <hr data-v-7bffef5a="" class="mb-4x"> <button data-v-0a77d865="" data-v-7bffef5a="" type="button" class="air3-btn air3-btn-secondary air3-btn-block my-3x" person-uid="2078226178421549157"><span data-v-0a77d865="">
+    StackOverflow
+    </span></button></div></div>
+
 <section class="air3-card">
   <h3>Education</h3>
   <div><strong role="presentation" class="mb-0">
