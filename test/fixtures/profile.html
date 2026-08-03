@@ -51,8 +51,20 @@
 
 <section class="air3-card">
   <h3>Portfolio</h3>
-  <a href="/freelancers/~01/p/1" aria-label="AI-Powered DEXPI Extraction"><img src="/img/a.png"></a>
-  <a href="/freelancers/~01/p/2" aria-label="RAG search platform"><img src="/img/b.png"></a>
+  <!--
+    Verbatim thumbnail cards. Two things here defeat an anchor-shaped reader: the <img> is a *sibling*
+    of the title link rather than a child, and the link's href is `javascript:` — a click handler, not
+    an address. The version this replaced had the image inside the anchor and a real URL, so it tested
+    a page Upwork does not serve.
+
+    The "More options" button is in the card too, and carries no href, which is why keying on the
+    anchor rather than sweeping the card's text keeps it out of the title.
+  -->
+  <div class="air3-grid-container mt-6x"><div class="span-6 span-md-4"><div class="portfolio-v2-shelf-thumbnail"><div class="air3-thumbnail position-relative d-flex" style="aspect-ratio: 1 / 0.8;"><div class="d-flex flex-1 portfolio-v2-shelf-thumbnail-image"><!----> <div class="list-complete-item-custom-bg d-flex flex-1"><img alt="" src="/att/download/portfolio/persons/uid/2078226178421549157/profile/projects/files/6120037a-0191-4208-a1fc-e1146895c8e5"></div></div> <!----> <div class="portfolio-v2-shelf-thumbnail-controls d-flex align-items-start justify-content-end p-2x"><div class="d-flex flex-wrap justify-content-end"><div class="m-1x"><div theme="air-3-0"><div class="air3-dropdown-secondary"><button id="dropdown-secondary-label-3" type="button" aria-expanded="false" class="air3-btn-sm air3-btn air3-btn-secondary air3-btn-circle air3-dropdown-secondary-toggle"><span class="sr-only">More options</span></button> <!----></div></div></div></div></div> <!----></div> <div class="mt-3x"><a href="javascript:" class="d-flex flex-column no-underline">
+      AI-Powered DEXPI Extraction
+    </a></div></div></div><div class="span-6 span-md-4"><div class="portfolio-v2-shelf-thumbnail"><div class="air3-thumbnail position-relative d-flex" style="aspect-ratio: 1 / 0.8;"><div class="d-flex flex-1 portfolio-v2-shelf-thumbnail-image"><!----> <div class="list-complete-item-custom-bg d-flex flex-1"><img alt="" src="/att/download/portfolio/persons/uid/2078226178421549157/profile/projects/files/7231148b-1202-5319-b2d0-f2257906d9f6"></div></div> <!----> <div class="portfolio-v2-shelf-thumbnail-controls d-flex align-items-start justify-content-end p-2x"><div class="d-flex flex-wrap justify-content-end"><div class="m-1x"><div theme="air-3-0"><div class="air3-dropdown-secondary"><button id="dropdown-secondary-label-4" type="button" aria-expanded="false" class="air3-btn-sm air3-btn air3-btn-secondary air3-btn-circle air3-dropdown-secondary-toggle"><span class="sr-only">More options</span></button> <!----></div></div></div></div></div> <!----></div> <div class="mt-3x"><a href="javascript:" class="d-flex flex-column no-underline">
+      RAG search platform
+    </a></div></div></div></div>
 </section>
 
 <section class="air3-card">

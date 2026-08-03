@@ -115,7 +115,15 @@ check("country from itemprop", profile.country, "India");
 check("hourly_rate from the $x/hr heading", profile.hourly_rate, 20);
 check("skills from air3-token", profile.skills, ["Python", "FastAPI", "LLM"]);
 check("portfolio titles", profile.portfolio.map((p) => p.title), ["AI-Powered DEXPI Extraction", "RAG search platform"]);
-check("portfolio urls absolute", profile.portfolio[0].url.endsWith("/freelancers/~01/p/1"), true);
+// The image is a sibling of the link, not a child — an anchor-shaped reader finds nothing here.
+check("portfolio image is found beside the link, not inside it",
+      profile.portfolio[0].image,
+      "https://www.upwork.com/att/download/portfolio/persons/uid/2078226178421549157/profile/projects/files/6120037a-0191-4208-a1fc-e1146895c8e5");
+// href="javascript:" is a click handler. Null is the honest answer; a resolved string would look like
+// a link, get stored, and open nothing.
+check("a script handler is not reported as a URL", profile.portfolio.map((p) => p.url), [null, null]);
+check("the More options control is not a portfolio piece",
+      profile.portfolio.some((p) => /more options/i.test(p.title || "")), false);
 check("work history", profile.work_history.map((w) => w.title), ["Next.js dashboard for logistics", "FastAPI migration"]);
 check(
   "employment: role, employer, dates and description",

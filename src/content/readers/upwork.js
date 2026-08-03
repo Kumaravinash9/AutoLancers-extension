@@ -11,7 +11,7 @@
  * base's generic lists rather than replacing them — a rename degrades to the fallback, not to nothing.
  */
 (() => {
-  const { clean, headingLike, inSection } = globalThis.ALExtractKit;
+  const { absolute, clean, headingLike, inSection } = globalThis.ALExtractKit;
 
   class UpworkReader extends globalThis.ALReaders.Reader {
 
@@ -170,6 +170,34 @@
           };
         })
         .filter((role) => role.title)
+        .slice(0, 25);
+    }
+
+    /**
+     * Portfolio pieces, where the entry is the thumbnail card rather than the link.
+     *
+     * The generic reader takes an anchor and looks inside it for a picture, which is the wrong shape
+     * twice over here. Upwork's image is a *sibling* of the title link, not a child, so it was never
+     * found; and the link's href is `javascript:` — a click handler, not an address — so the URL was a
+     * string that looks like a link and opens nothing.
+     *
+     * Reading the card gets both right: the picture and the title are siblings inside it, and the
+     * address is admitted to be absent rather than invented. Falls back to the generic anchor walk on
+     * a layout with no such card.
+     */
+    portfolio() {
+      const cards = [...document.querySelectorAll(".portfolio-v2-shelf-thumbnail")];
+      if (!cards.length) return super.portfolio();
+      return cards
+        .map((card) => {
+          const link = card.querySelector("a[href]");
+          return {
+            title: clean(link?.getAttribute("aria-label") || link?.textContent || "") || null,
+            url: this.href(link),
+            image: absolute(card.querySelector("img")?.getAttribute("src")),
+          };
+        })
+        .filter((piece) => piece.title || piece.image)
         .slice(0, 25);
     }
 

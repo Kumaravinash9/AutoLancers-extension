@@ -354,11 +354,21 @@ globalThis.ALReaders ||= (() => {
       return inSection(this.sections.portfolio, "a[href]")
         .map((a) => ({
           title: clean(a.getAttribute("aria-label") || a.textContent) || null,
-          url: absolute(a.getAttribute("href")),
+          // `href="javascript:"` is a click handler wearing an anchor's clothes. Resolving it produces
+          // a string that looks like a link and opens nothing, which is worse than admitting there is
+          // no address — the backend would store it and something downstream would follow it.
+          url: this.href(a),
           image: absolute(a.querySelector("img")?.getAttribute("src")),
         }))
         .filter((entry) => entry.title || entry.image)
         .slice(0, 25);
+    }
+
+    /** An anchor's address, or null when it carries a script handler instead of one. */
+    href(node) {
+      const raw = (node?.getAttribute("href") || "").trim();
+      if (!raw || /^(?:javascript:|#)/i.test(raw)) return null;
+      return absolute(raw);
     }
 
     workHistory() {
