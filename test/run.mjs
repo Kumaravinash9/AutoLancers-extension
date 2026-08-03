@@ -96,6 +96,20 @@ console.log("\nprofile page (structure taken from a live diagnostics dump):");
 const profile = await read("profile.html", "readProfile");
 check("display_name from itemprop", profile.display_name, "Avinash K.");
 check("tagline from heading", profile.tagline, "AI, Backend & Platform Engineer");
+// From the clamped block Upwork actually renders. Nothing marks it as a description, so before its
+// classes were declared this fell through to the meta description — the search blurb, not the text
+// the person wrote — and no test existed to notice.
+// Read through `??` rather than off the field directly: when this regressed, `summary` was null and
+// `null.startsWith` threw, which killed the run before a single check printed. A test that crashes
+// takes every later check with it and reports nothing — worse than the bug it was meant to catch.
+{
+  const summary = profile.summary ?? "";
+  check("summary from the clamped overview block",
+        summary.startsWith("I am an AI, Backend, and Platform Engineer with 4+ years"), true);
+  // `is-clamped` hides the tail visually; the text is all there in the DOM, so it must all arrive.
+  check("summary is the whole overview, not the visible excerpt",
+        summary.endsWith("Always looking for the next complex engineering problem to solve."), true);
+}
 check("city from itemprop", profile.city, "Bengaluru");
 check("country from itemprop", profile.country, "India");
 check("hourly_rate from the $x/hr heading", profile.hourly_rate, 20);

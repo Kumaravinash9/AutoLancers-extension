@@ -34,7 +34,18 @@
         clientSpend: ['[data-test="client-spend"]'],
         clientMemberSince: ['[data-test="client-contract-date"]'],
         clientIndustry: ['[data-test="client-industry"]'],
-        profileSummary: ["[itemprop='description']", '[data-cy="about-me-section"] p'],
+        // The overview, which Upwork renders as a clamped block: a `.air3-line-clamp` wrapper around a
+        // span carrying `text-pre-line`. Neither of the two entries that used to be here matched it —
+        // there is no itemprop and no `about-me-section` — so the summary fell through to the meta
+        // description, which is the search-engine blurb rather than what the person wrote. The
+        // substring form is second so an air3 → air4 rename degrades instead of breaking; both older
+        // guesses are kept last, since they cost nothing and may still be right on another layout.
+        profileSummary: [
+          "[itemprop='description']",
+          ".air3-line-clamp .text-pre-line",
+          "[class*='line-clamp'] .text-pre-line",
+          '[data-cy="about-me-section"] p',
+        ],
         skillToken: ".air3-token, " + base.skillToken,
       };
     }
