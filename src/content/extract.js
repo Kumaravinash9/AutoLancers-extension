@@ -291,7 +291,28 @@ function canonicalJobUrl(url) {
  * returned every item in the "complete your profile" checklist. A heading owns the content that
  * follows it until the next heading of equal or greater rank, and nothing else.
  */
-const OVERLAY = "[class*='popper'], [class*='popover'], [class*='tooltip'], [role='tooltip'], [role='dialog'], nav, header, footer";
+/**
+ * Things that float over a page rather than being part of it.
+ *
+ * The `:not(...)` halves matter as much as the matches. A tooltip has two parts — the panel, which is
+ * an overlay, and the *trigger*, which is ordinary page content that happens to be named after it.
+ * Upwork wraps four of its skill chips in `skill-tooltip-reference air3-popper-trigger`, and matching
+ * those as overlay silently dropped every skill that carried a definition popover: Artificial
+ * Intelligence, Web Development, Product Development and one more were missing from a real profile
+ * while the six chips with no tooltip came through fine.
+ *
+ * Excluding by the trigger/reference suffix rather than by Upwork's class names, because those two
+ * words are what tooltip libraries generally call the thing you point at. The panel itself carries
+ * neither, so the Wikipedia blurbs inside it stay excluded.
+ */
+const OVERLAY = [
+  "[class*='popper']:not([class*='trigger'])",
+  "[class*='popover']:not([class*='trigger'])",
+  "[class*='tooltip']:not([class*='reference']):not([class*='trigger'])",
+  "[role='tooltip']",
+  "[role='dialog']",
+  "nav", "header", "footer",
+].join(", ");
 
 /** Overlay and navigation chrome is not document structure — it must not split or fill a section. */
 function isChrome(node) {

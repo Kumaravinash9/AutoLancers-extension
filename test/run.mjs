@@ -1090,6 +1090,25 @@ console.log("\nper-platform field extraction:");
   check("PeoplePerHour declares only maps", seam.declaredByPph, ["selectors", "labels", "loginSigns"]);
 }
 
+// A real Upwork skills block, which the generic selector read as one 811-character string and the
+// overlay filter quietly halved. Both failures produced a plausible-looking answer.
+console.log("\nUpwork skills, from the real chip markup:");
+{
+  const sk = await readFrom("upwork-skills.html",
+    "https://www.upwork.com/freelancers/~019abcdef123456789", "readProfile");
+  check("every chip, including the four carrying a definition popover", sk.skills, [
+    "AI Chatbot", "Back-End Development", "CI/CD", "Ecommerce Website", "Artificial Intelligence",
+    "Ecommerce", "Web Application", "Web Development", "Product Development",
+    "Multithreaded, Parallel, & Distributed Programming Language",
+  ]);
+  // The container is a chip too as far as `[class*='token']` is concerned. Length is what tells them
+  // apart: no skill name runs to hundreds of characters, and the swallowed list ran to 811.
+  check("no entry is the whole list", Math.max(...sk.skills.map((x) => x.length)) < 70, true);
+  // The popovers are still overlays — only the trigger stopped being treated as one.
+  check("no definition text leaked out of the popovers",
+        sk.skills.some((x) => /wikipedia|intelligence of machines|broad term/i.test(x)), false);
+}
+
 await browser.close();
 console.log(failures ? `\n${failures} failing` : "\nall checks passed");
 process.exit(failures ? 1 : 0);

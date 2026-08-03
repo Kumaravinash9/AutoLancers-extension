@@ -46,7 +46,17 @@
           "[class*='line-clamp'] .text-pre-line",
           '[data-cy="about-me-section"] p',
         ],
-        skillToken: ".air3-token, " + base.skillToken,
+        // Replaces the base's selector instead of extending it, which is the exception to how every
+        // other entry in this file works. `[class*='token']` matches the `air3-token-wrap` class on
+        // the <ul> that holds the chips, so the generic rule returned the entire list as a single
+        // 811-character "skill" — every name run together, plus "Close the tooltip" and the Wikipedia
+        // blurbs from the hidden popovers. Adding a better selector in front does not help when the
+        // worse one is still in the list.
+        //
+        // `.air3-token` is safe beside it: class names match as whole words, so it does not match
+        // `air3-token-wrap`. Losing both names would leave skills empty rather than wrong, which is
+        // the trade this file has always taken.
+        skillToken: ".skill-name, .air3-token",
       };
     }
 
