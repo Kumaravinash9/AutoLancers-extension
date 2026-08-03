@@ -92,6 +92,10 @@ globalThis.ALReaders ||= (() => {
         // Tried in order. Was a literal inside `readProfile` — the one field whose selector lived
         // nowhere a marketplace could reach it.
         profileAvatar: ['img[alt*="profile" i]', '[class*="avatar"] img'],
+        // What one entry inside a listed section looks like — a school, a past role, a certificate.
+        // Was written out as a literal in three readers, so a site that marks its entries any other
+        // way lost all three fields at once with nowhere to say so.
+        sectionEntry: "h4, h5, li",
       };
     }
 
@@ -354,7 +358,7 @@ globalThis.ALReaders ||= (() => {
 
     workHistory() {
       return [...new Set(
-        inSection(this.sections.workHistory, "h4, h5, li")
+        inSection(this.sections.workHistory, this.selectors.sectionEntry)
           .map((node) => clean(node.textContent))
           .filter((text) => text && text.length > 3)
       )]
@@ -364,7 +368,7 @@ globalThis.ALReaders ||= (() => {
 
     education() {
       return [...new Set(
-        inSection(this.sections.education, "h4, h5, li").map((n) => clean(n.textContent)).filter(Boolean)
+        inSection(this.sections.education, this.selectors.sectionEntry).map((n) => clean(n.textContent)).filter(Boolean)
       )]
         .slice(0, 10)
         .map((school) => ({ school }));
@@ -372,7 +376,7 @@ globalThis.ALReaders ||= (() => {
 
     certifications() {
       return [...new Set(
-        inSection(this.sections.certifications, "h4, h5, li")
+        inSection(this.sections.certifications, this.selectors.sectionEntry)
           .map((node) => clean(node.textContent))
           .filter(Boolean)
       )].slice(0, 20);

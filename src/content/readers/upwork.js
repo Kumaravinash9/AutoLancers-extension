@@ -57,6 +57,18 @@
         // `air3-token-wrap`. Losing both names would leave skills empty rather than wrong, which is
         // the trade this file has always taken.
         skillToken: ".skill-name, .air3-token",
+        // An education entry is a <strong> above two plain divs, with no heading and no list item
+        // anywhere in it:
+        //
+        //   <strong role="presentation" class="mb-0">Institute of Technology (IIT) (BHU), Varanasi</strong>
+        //   <div class="text-light">Bachelor of Technology (BTech), Computer science</div>
+        //   <div class="text-light-on-inverse">2018-2022</div>
+        //
+        // So the base's "h4, h5, li" matched nothing and education came back empty on every real
+        // profile. Only the <strong> is listed: the two divs below it are the degree and the years,
+        // which are worth having but have nowhere to go — the field is a list of school names — and
+        // matching them here would file each one as a separate school.
+        sectionEntry: `strong[role='presentation'], strong.mb-0, ${base.sectionEntry}`,
       };
     }
 

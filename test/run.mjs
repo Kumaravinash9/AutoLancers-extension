@@ -128,7 +128,14 @@ check(
 );
 check("certifications skip the popover upsell", profile.certifications, ["AWS Solutions Architect"]);
 // The bug this replaced: an "Education" item in the sidebar checklist pulled every nav heading in.
-check("no education section means none reported", profile.education, []);
+// The <strong> entry, not the <h4>Education</h4> decoy sitting in the sidebar checklist above it —
+// which is what this field used to report, and which is why the nav is filtered as page furniture.
+check("education from the bold entry, not the sidebar decoy",
+      profile.education.map((e) => e.school), ["Institute of Technology (IIT) (BHU), Varanasi"]);
+// The degree and the years sit in two divs under that strong. They are deliberately not collected:
+// the field is a list of school names, so matching them would file each as its own school.
+check("the degree and years are not filed as schools",
+      profile.education.some((e) => /BTech|2018/.test(e.school)), false);
 check("nav headings never leak into a section", JSON.stringify(profile).includes("Promote with ads"), false);
 
 console.log("\nplatform routing:");

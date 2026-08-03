@@ -52,6 +52,22 @@
   <h4>Software Engineer - II | Deutsche Bank</h4>
 </section>
 
+<!--
+  A real education entry: a <strong> above two plain divs, no heading and no list item anywhere. The
+  base's "h4, h5, li" matched none of it, so this field came back empty on every live profile while
+  this fixture had no education section at all and asserted the empty result as correct.
+
+  The decoy in the nav above — an <h4>Education</h4> in the sidebar checklist — is deliberately kept.
+  It used to be scraped as the education itself, so this section now has to beat it rather than merely
+  exist.
+-->
+<section class="air3-card">
+  <h3>Education</h3>
+  <div><strong role="presentation" class="mb-0">
+      Institute of Technology (IIT) (BHU), Varanasi
+    </strong> <div class="text-light">Bachelor of Technology (BTech), Computer science</div> <div class="text-light-on-inverse">2018-2022</div></div>
+</section>
+
 <section class="air3-card">
   <h3>Certifications</h3>
   <!-- Live pages put this upsell in a popover that outranks the section heading. -->
