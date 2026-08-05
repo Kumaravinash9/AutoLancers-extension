@@ -18,11 +18,27 @@
  * appeared to work. Guarding on the namespace makes re-injection a no-op.
  */
 globalThis.ALPlatforms ||= (() => {
+
+/**
+ * Fiverr's own top-level paths, which are shaped exactly like a username.
+ *
+ * `fiverr.com/inbox` and `fiverr.com/my-username` are indistinguishable by pattern, so telling them
+ * apart takes a list. Erring towards "not a profile" is the safe direction: a profile page missed is
+ * a button that doesn't appear, while a settings page mistaken for a profile is a scrape of the wrong
+ * thing written into your profile row.
+ */
+const FIVERR_RESERVED = new Set([
+  "inbox", "orders", "briefs", "gigs", "gig", "categories", "settings", "users", "start_selling",
+  "login", "join", "signin", "logout", "dashboard", "notifications", "search", "support", "help",
+  "cp", "seller_dashboard", "selling", "buying", "invoices", "earnings", "analytics", "pro",
+  "business", "studios", "logo-maker", "share", "terms_of_service", "privacy_policy", "about",
+]);
+
 const PLATFORMS = {
   upwork: {
     id: "upwork",
     label: "Upwork",
-    host: /(^|\.)upwork\.com$/,
+    host: /^(?:www\.)?upwork\.com$/,
 
     // `~021…` appears in both link shapes Upwork uses: bare, and slug-then-id.
     jobId: (url) => (url.match(/~[0-9a-zA-Z]{10,}/) || [null])[0],
@@ -32,7 +48,22 @@ const PLATFORMS = {
     profileExample: "upwork.com/freelancers/~0abc…",
     jobExample: "upwork.com/jobs/~021abc…",
 
+    // Where a signed-out request lands. Upwork redirects any find-work URL here, so the reader must
+    // Your own profile is whatever the site's own header links to. Only you get that link, so
+    // following it is how "my profile" is answered without asking you to paste a URL.
+    ownProfileLink: 'a[href*="/freelancers/~"]',
+    // The id in the URL is the account identity; two profiles are the same person iff these match.
+    profileId: (url) => (url.match(/~[0-9a-zA-Z]{10,}/) || [null])[0],
+
+    // `/freelancers/` with no id: Upwork resolves it against your session and redirects to your own
+    // profile. Worth having as a fallback because it depends on nothing about the page's markup —
+    // where the header link is one redesign away from moving — and because it works from anywhere,
+    // including a page with no account menu on it at all. It costs a navigation, which is why it is
+    // the fallback rather than the first thing tried.
+    ownProfileUrl: "https://www.upwork.com/freelancers/",
+
     pages: [
+      { key: "own_profile", label: "My profile", link: "/freelancers/", url: "https://www.upwork.com/freelancers/", reads: "profile" },
       { key: "best_matches", label: "Best matches", link: "/nx/find-work/best-matches", url: "https://www.upwork.com/nx/find-work/best-matches", reads: "jobs" },
       { key: "most_recent", label: "Most recent", link: "/nx/find-work/most-recent", url: "https://www.upwork.com/nx/find-work/most-recent", reads: "jobs" },
       { key: "saved_jobs", label: "Saved jobs", link: "/nx/search/jobs/saved", url: "https://www.upwork.com/nx/search/jobs/saved/", reads: "jobs" },
@@ -47,7 +78,7 @@ const PLATFORMS = {
   peopleperhour: {
     id: "peopleperhour",
     label: "PeoplePerHour",
-    host: /(^|\.)peopleperhour\.com$/,
+    host: /^(?:www\.)?peopleperhour\.com$/,
 
     // PPH uses a numeric id at the end of a slug: /freelance-jobs/…-4123456
     jobId: (url) => (url.match(/-(\d{5,})(?:\/|$|\?)/) || [null, null])[1],
@@ -57,7 +88,11 @@ const PLATFORMS = {
     profileExample: "peopleperhour.com/freelancer/…",
     jobExample: "peopleperhour.com/freelance-jobs/…-4123456",
 
+    ownProfileLink: 'a[href*="/freelancer/"]',
+    profileId: (url) => (url.match(/\/freelancer\/([^/?#]+)/) || [null, null])[1],
+
     pages: [
+      { key: "pph_profile", label: "My profile", reads: "profile" },
       { key: "pph_feed", label: "Job feed", link: "/freelance-jobs", url: "https://www.peopleperhour.com/freelance-jobs", reads: "jobs" },
       { key: "pph_saved", label: "Saved jobs", link: "/site/saved-jobs", url: "https://www.peopleperhour.com/site/saved-jobs", reads: "jobs" },
       { key: "pph_proposals", label: "My proposals", link: "/site/proposals", url: "https://www.peopleperhour.com/site/proposals", reads: "rows" },
@@ -68,7 +103,13 @@ const PLATFORMS = {
   fiverr: {
     id: "fiverr",
     label: "Fiverr",
-    host: /(^|\.)fiverr\.com$/,
+    host: /^(?:www\.)?fiverr\.com$/,
+    // Parked, not removed. Everything below still works and is still tested; this flag is the only
+    // thing standing between it and being live again. It moves together with the commented-out
+    // `host_permissions` in manifest.json — recognising a site Chrome will refuse to let us read is
+    // the exact failure that produced "Cannot access contents of url", so the two must never disagree.
+    enabled: false,
+
 
     // Fiverr is a listing marketplace, not a bidding one: sellers publish gigs and buyers come to
     // them. Buyer Requests — the closest thing it had to a job board — were removed in 2023. So
@@ -77,9 +118,26 @@ const PLATFORMS = {
     jobId: (url) => (url.match(/\/(?:gigs?|briefs?)\/([A-Za-z0-9_-]{6,})/) || [null, null])[1],
     jobLink: 'a[href*="/gigs/"], a[href*="/briefs/"]',
     isJobPage: (url) => /fiverr\.com\/(?:gigs?|briefs?)\//.test(url),
-    isProfilePage: (url) => /fiverr\.com\/(?!gigs?\/|briefs?\/|categories\/)[A-Za-z0-9_.-]+\/?$/.test(url),
+
+    /**
+     * A Fiverr seller profile is `fiverr.com/<username>` — the same shape as most of the site's own
+     * pages, which is why this needs a reserved list rather than a lookahead for three of them.
+     *
+     * The earlier pattern excluded only gigs, briefs and categories, so `/inbox`, `/orders`,
+     * `/settings` and `/users` all read as "a profile". That mattered: a page misread as a profile
+     * gets scraped as one and then written into *your* profile row.
+     */
+    isProfilePage: (url) => {
+      const match = url.match(/^https?:\/\/(?:www\.)?fiverr\.com\/([A-Za-z0-9_.-]+)\/?(?:[?#]|$)/);
+      return Boolean(match) && !FIVERR_RESERVED.has(match[1].toLowerCase());
+    },
     profileExample: "fiverr.com/your-username",
     jobExample: "fiverr.com/briefs/…",
+
+    // Fiverr's header links your own profile as `/<username>`; `/users/<username>/…` also carries it.
+    ownProfileLink: 'a[href*="/users/"], header a[href^="/"]',
+    profileId: (url) =>
+      (url.match(/fiverr\.com\/(?:users\/)?([A-Za-z0-9_.-]+)/) || [null, null])[1],
 
     pages: [
       { key: "fvr_gigs", label: "My gigs", link: "/users", url: "https://www.fiverr.com/users/_/manage_gigs", reads: "rows" },
@@ -90,7 +148,14 @@ const PLATFORMS = {
   },
 };
 
-/** The platform for a URL, or null when we are somewhere we do not read. */
+/**
+ * The platform for a URL, or null when we are somewhere we do not read.
+ *
+ * Matched on the exact host, not on "ends with upwork.com". Two reasons, and they agree:
+ * `community.upwork.com` is a forum full of other people's posts rather than the job board, so
+ * claiming it would be wrong on the merits — and the manifest grants no access to it either, so the
+ * readers would fail with "Cannot access contents of url" after the popup had already offered.
+ */
 function platformFor(url) {
   let host;
   try {
@@ -98,7 +163,7 @@ function platformFor(url) {
   } catch {
     return null;
   }
-  return Object.values(PLATFORMS).find((p) => p.host.test(host)) || null;
+  return Object.values(PLATFORMS).find((p) => p.enabled !== false && p.host.test(host)) || null;
 }
 
 /** The platform this page belongs to. */
