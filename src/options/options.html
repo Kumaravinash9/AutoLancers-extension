@@ -43,7 +43,38 @@
   <body>
     <header><span class="brand">Auto<span>Lancers</span></span></header>
 
-    <main>
+    <!--
+      Shown instead of the settings when the connected account is not an admin. Nothing on this page is
+      part of the product: the app hands the extension its backend address and token over the bridge
+      when you sign in, so an ordinary user has never needed to open it.
+
+      Tidiness, not access control — see the comment on `isAdmin` in options.js. The page is reachable
+      by URL and chrome.storage is editable from devtools, so this hides knobs rather than protecting
+      them. Anything that genuinely must be restricted belongs behind `require_admin` on the backend.
+    -->
+    <main id="locked" hidden>
+      <div class="row">
+        <p class="hint ok">This browser is already connected to AutoLancers.</p>
+        <p class="hint">
+          There is nothing to configure here. The extension gets its backend address and its token
+          from the AutoLancers app when you sign in, and everything else on this page is a deployment
+          setting rather than a preference.
+        </p>
+        <p class="hint">
+          Open the toolbar icon on an Upwork or PeoplePerHour page to read it, or use
+          <b>Collect my pages…</b> to gather several at once.
+        </p>
+        <!--
+          A way out. This page is reachable from the toolbar menu and from a stray click, and without
+          a link back it is a cul-de-sac: it tells you there is nothing here and then leaves you here.
+          The href is filled in from the origin the app sent when it connected, since the extension
+          has no other way to know where the front end lives.
+        -->
+        <p class="hint"><a id="back" href="#" hidden>← Back to AutoLancers</a></p>
+      </div>
+    </main>
+
+    <main id="settings" hidden>
       <div class="row">
         <label for="apiUrl">Backend URL</label>
         <input id="apiUrl" type="url" placeholder="http://localhost:8010" />
@@ -82,6 +113,33 @@
           eight pages, with a pause between each. Setting it to 0 takes about 4 seconds and has
           tripped Upwork's bot detection in practice — the browser was challenged for a while,
           though the account itself stayed fine.
+        </p>
+        <p class="hint">
+          <label>
+            <input id="pushToBackend" type="checkbox" />
+            Send each collected page to AutoLancers as it finishes
+          </label>
+          — every job listing becomes a project, deduped on its marketplace id, so the same posting
+          seen on Best matches and Most recent is one row scored once. Needs a token; with none set
+          nothing is sent and nothing fails.
+        </p>
+        <p class="hint">
+          <label>
+            <input id="useLlm" type="checkbox" />
+            Let the AI fill fields the selectors missed
+          </label>
+          — costs tokens and seconds per page, and only runs when a field actually came back empty.
+          It can never overwrite a value the selectors found, and it can never introduce a job that
+          wasn't on the page: a job's id lives in its link, and a job with no id could not be
+          deduped against the next collection.
+        </p>
+        <p class="hint">
+          <label>
+            <input id="showTab" type="checkbox" />
+            Show the marketplace tabs while they are read
+          </label>
+          — off by default, a run reads in a background tab that never takes focus. Turn this on to
+          watch it work, or to step in when Upwork asks you to sign in mid-run.
         </p>
       </div>
 

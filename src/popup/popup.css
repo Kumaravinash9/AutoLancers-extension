@@ -372,6 +372,20 @@ main h3 {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 11px;
   color: var(--muted);
+  text-align: right;
+}
+
+/* What the backend made of the page, under what the scraper found. Its own line because the two can
+   disagree — twelve found and none stored is a broken selector, not a success. */
+.step-filed {
+  display: block;
+  font-size: 10px;
+  opacity: 0.85;
+}
+
+.step-filed.failed {
+  color: #a3372c;
+  opacity: 1;
 }
 
 /* State is carried by the dot as well as the text, so it reads at a glance. */

@@ -1,0 +1,22 @@
+<!doctype html><html><head><title>Log In - Upwork</title></head><body>
+<!--
+  What a signed-out collection actually gets. This is the trap the session check exists for: the page
+  loads perfectly, so the tab reaches `complete` and nothing errors — but it holds no job links, so
+  the reader would return an empty list and the run would report "0 found" on every page. That reads
+  exactly like a quiet day on the marketplace.
+-->
+<header>
+  <a href="/">Upwork</a>
+</header>
+<main>
+  <h1>Log in to Upwork</h1>
+  <form>
+    <label for="username">Username or Email</label>
+    <input id="username" type="text" name="login[username]" />
+    <label for="password">Password</label>
+    <input id="password" type="password" name="login[password]" />
+    <button type="submit">Continue with Email</button>
+  </form>
+  <p>Don't have an Upwork account? <a href="/nx/signup/">Sign Up</a></p>
+</main>
+</body></html>

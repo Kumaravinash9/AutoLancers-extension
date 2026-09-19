@@ -25,6 +25,9 @@
  * and "a bot that watches the site", and it is the wrong side of it.
  */
 
+import { PUSH_DEFAULTS, connection, pushPage, pushPostings } from "./api.js";
+import { announce, openBridge } from "./bridge.js";
+
 const STATE_KEY = "collect.state";
 const SETTINGS_KEY = "collect.settings";
 
@@ -50,6 +53,17 @@ const RENDER_WAIT_MS = 2500;
  */
 const DEFAULT_CONCURRENCY = 1;
 
+/**
+ * Whether the tabs a run opens are visible while it reads them.
+ *
+ * Off by default, for the reasons the tab-creation sites give: an inactive tab does not yank focus
+ * away mid-run, and one tab quietly browsing is a quieter pattern than tabs flashing open and shut.
+ * But "I could not see it work" is a real objection — a hidden run is indistinguishable from a
+ * broken one until the results land — so `showTab` lets a caller (the app's handover, or Settings)
+ * ask to watch. Set for the length of one run; runs never overlap, so a module-level flag is enough.
+ */
+let showTab = false;
+
 export const DEFAULT_KEYS = ["best_matches", "most_recent", "saved_jobs", "invites"];
 
 /**
@@ -59,22 +73,24 @@ export const DEFAULT_KEYS = ["best_matches", "most_recent", "saved_jobs", "invit
  * content script's globals, and the alternative — a build step to share one file — is more
  * machinery than a table of URLs deserves. The `pages` arrays must stay in step; the ids are what
  * bind them.
+ *
+ * Only what the worker actually navigates with: the host, the id, the label and the pages. The URL
+ * matchers used to be copied here too and had already drifted out of step — this copy still held the
+ * Fiverr pattern that matched `/inbox` and `/orders` as profiles. Nothing could have used them
+ * either: a function cannot cross a `chrome.runtime` message boundary, so they were dropped from the
+ * response before any caller saw them. Deciding what a page *is* belongs to the content script, which
+ * is on the page.
  */
 const PLATFORMS = {
   upwork: {
     id: "upwork",
     label: "Upwork",
-    host: /(^|\.)upwork\.com$/,
-
-    // `~021…` appears in both link shapes Upwork uses: bare, and slug-then-id.
-    jobId: (url) => (url.match(/~[0-9a-zA-Z]{10,}/) || [null])[0],
-    jobLink: 'a[href*="/jobs/~"], a[href*="/jobs/"]',
-    isJobPage: (url) => /upwork\.com\/(?:nx\/)?jobs?\/[^/]*~[0-9a-zA-Z]{10,}/.test(url),
-    isProfilePage: (url) => /upwork\.com\/freelancers\/~[0-9a-zA-Z]{10,}/.test(url),
-    profileExample: "upwork.com/freelancers/~0abc…",
-    jobExample: "upwork.com/jobs/~021abc…",
-
+    host: /^(?:www\.)?upwork\.com$/,
+    // Exactly what `host_permissions` grants. Used to find an already-open tab, so it
+    // must not match a host the readers would then be refused access to.
+    origins: ["https://www.upwork.com/*", "https://upwork.com/*"],
     pages: [
+      { key: "own_profile", label: "My profile", link: "/freelancers/", url: "https://www.upwork.com/freelancers/", reads: "profile" },
       { key: "best_matches", label: "Best matches", link: "/nx/find-work/best-matches", url: "https://www.upwork.com/nx/find-work/best-matches", reads: "jobs" },
       { key: "most_recent", label: "Most recent", link: "/nx/find-work/most-recent", url: "https://www.upwork.com/nx/find-work/most-recent", reads: "jobs" },
       { key: "saved_jobs", label: "Saved jobs", link: "/nx/search/jobs/saved", url: "https://www.upwork.com/nx/search/jobs/saved/", reads: "jobs" },
@@ -89,17 +105,12 @@ const PLATFORMS = {
   peopleperhour: {
     id: "peopleperhour",
     label: "PeoplePerHour",
-    host: /(^|\.)peopleperhour\.com$/,
-
-    // PPH uses a numeric id at the end of a slug: /freelance-jobs/…-4123456
-    jobId: (url) => (url.match(/-(\d{5,})(?:\/|$|\?)/) || [null, null])[1],
-    jobLink: 'a[href*="/freelance-jobs/"], a[href*="/job/"]',
-    isJobPage: (url) => /peopleperhour\.com\/(?:freelance-jobs|job)\/[^?]*\d{5,}/.test(url),
-    isProfilePage: (url) => /peopleperhour\.com\/freelancer\//.test(url),
-    profileExample: "peopleperhour.com/freelancer/…",
-    jobExample: "peopleperhour.com/freelance-jobs/…-4123456",
-
+    host: /^(?:www\.)?peopleperhour\.com$/,
+    // Exactly what `host_permissions` grants. Used to find an already-open tab, so it
+    // must not match a host the readers would then be refused access to.
+    origins: ["https://www.peopleperhour.com/*", "https://peopleperhour.com/*"],
     pages: [
+      { key: "pph_profile", label: "My profile", reads: "profile" },
       { key: "pph_feed", label: "Job feed", link: "/freelance-jobs", url: "https://www.peopleperhour.com/freelance-jobs", reads: "jobs" },
       { key: "pph_saved", label: "Saved jobs", link: "/site/saved-jobs", url: "https://www.peopleperhour.com/site/saved-jobs", reads: "jobs" },
       { key: "pph_proposals", label: "My proposals", link: "/site/proposals", url: "https://www.peopleperhour.com/site/proposals", reads: "rows" },
@@ -110,19 +121,16 @@ const PLATFORMS = {
   fiverr: {
     id: "fiverr",
     label: "Fiverr",
-    host: /(^|\.)fiverr\.com$/,
+    host: /^(?:www\.)?fiverr\.com$/,
+    // Parked, not removed. Everything below still works and is still tested; this flag is the only
+    // thing standing between it and being live again. It moves together with the commented-out
+    // `host_permissions` in manifest.json — recognising a site Chrome will refuse to let us read is
+    // the exact failure that produced "Cannot access contents of url", so the two must never disagree.
+    enabled: false,
 
-    // Fiverr is a listing marketplace, not a bidding one: sellers publish gigs and buyers come to
-    // them. Buyer Requests — the closest thing it had to a job board — were removed in 2023. So
-    // there is no job feed to score here, and what is worth collecting is your own side of it:
-    // your gigs, your orders, your seller profile.
-    jobId: (url) => (url.match(/\/(?:gigs?|briefs?)\/([A-Za-z0-9_-]{6,})/) || [null, null])[1],
-    jobLink: 'a[href*="/gigs/"], a[href*="/briefs/"]',
-    isJobPage: (url) => /fiverr\.com\/(?:gigs?|briefs?)\//.test(url),
-    isProfilePage: (url) => /fiverr\.com\/(?!gigs?\/|briefs?\/|categories\/)[A-Za-z0-9_.-]+\/?$/.test(url),
-    profileExample: "fiverr.com/your-username",
-    jobExample: "fiverr.com/briefs/…",
-
+    // Exactly what `host_permissions` grants. Used to find an already-open tab, so it
+    // must not match a host the readers would then be refused access to.
+    origins: ["https://www.fiverr.com/*", "https://fiverr.com/*"],
     pages: [
       { key: "fvr_gigs", label: "My gigs", link: "/users", url: "https://www.fiverr.com/users/_/manage_gigs", reads: "rows" },
       { key: "fvr_orders", label: "Orders", link: "/orders", url: "https://www.fiverr.com/orders", reads: "rows" },
@@ -133,17 +141,21 @@ const PLATFORMS = {
 };
 
 
-export const PLATFORM_LIST = Object.values(PLATFORMS);
+// Disabled platforms are excluded here rather than filtered at each use site, so a parked
+// marketplace cannot leak back in through the popup's picker or a page lookup.
+export const PLATFORM_LIST = Object.values(PLATFORMS).filter((p) => p.enabled !== false);
 
 /** Pages for the site of the tab we are working in. */
 function pagesFor(platformId) {
-  return PLATFORMS[platformId]?.pages || [];
+  const platform = PLATFORMS[platformId];
+  return platform && platform.enabled !== false ? platform.pages : [];
 }
 
 function platformForUrl(url) {
   let host;
   try {
     host = new URL(url).hostname;
+    console.log("platformForUrl", url, host);
   } catch {
     return null;
   }
@@ -164,6 +176,143 @@ async function setState(patch) {
   const next = { ...current, ...patch };
   await chrome.storage.local.set({ [STATE_KEY]: next });
   return next;
+}
+
+/**
+ * What the app is told, which is not everything the popup knows.
+ *
+ * Progress and the marketplace's own rows stay here. The app has no use for a per-page checklist — it
+ * is not the thing running the collection — and the scraped jobs reach it through the backend, where
+ * they are scored. What it needs is whether reading is working, and enough to say so in a sentence.
+ */
+function summarise(state) {
+  const pushes = Object.values(state.pushes || {});
+  return {
+    running: Boolean(state.running),
+    platform: state.platform || null,
+    session: state.session || null,
+    note: state.note || null,
+    pages: { done: state.done ?? 0, total: state.total ?? 0 },
+    failed: Object.keys(state.errors || {}).length,
+    stored: pushes.reduce((sum, p) => sum + (p?.stored || 0), 0),
+    finishedAt: state.finishedAt || null,
+  };
+}
+
+/** The current state, for an app tab that just connected and has missed everything so far. */
+async function bridgeState() {
+  const { [STATE_KEY]: state = {} } = await chrome.storage.local.get(STATE_KEY);
+  return { type: "state", ...summarise(state) };
+}
+
+/** Set the state and tell the app in one act, so the two can never disagree. */
+async function publish(patch) {
+  const next = await setState(patch);
+  announce({ type: "state", ...summarise(next) });
+  return next;
+}
+
+/**
+ * What the app's "Sync" button runs: your own profile, then the job feeds.
+ *
+ * The profile first because it is what everything else is scored against — a board built before the
+ * profile is read is scored against whatever the row happened to hold. Rows pages and message rooms
+ * are excluded: they have no modelled table yet, and the button says profile and jobs.
+ */
+function syncKeys(platformId) {
+  return pagesFor(platformId)
+    .filter((p) => p.reads === "profile" || p.reads === "jobs")
+    .map((p) => p.key);
+}
+
+async function startSync(platformId) {
+  const { [STATE_KEY]: state = {} } = await chrome.storage.local.get(STATE_KEY);
+  // A second Sync while one is running would interleave two runs through the same tab.
+  if (state.running) return { ok: true, started: false, reason: "already_running" };
+
+  const keys = syncKeys(platformId);
+  if (!keys.length) return { ok: false, reason: "unknown_platform" };
+
+  void run(keys, platformId);
+  return { ok: true, started: true, pages: keys.length };
+}
+
+openBridge({
+  state: bridgeState,
+  version: chrome.runtime.getManifest().version,
+  start: startSync,
+});
+
+/**
+ * File one finished page with the backend.
+ *
+ * As each page completes rather than in one batch at the end: a run that is cancelled or that loses
+ * its last page keeps everything it already read. The whole run is one request per page either way.
+ *
+ * Never throws. A backend that is down, or a token that has expired, must cost the filing and not
+ * the collection — the scraped rows are still sitting in `results` and still copyable. The failure is
+ * recorded against the page so the checklist can say so, rather than showing a tick that means
+ * "read" while the user reads it as "stored".
+ */
+/**
+ * A page that turned out to be a wall, not a page.
+ *
+ * Signed out, every find-work URL redirects to the login page — which loads fine, so the reader finds
+ * no jobs on it and would otherwise report a truthful-looking zero. Two things follow from detecting
+ * it, and the second matters more:
+ *
+ *   1. The run stops. There is nothing behind the wall, so the remaining seven pages are seven
+ *      pointless requests — and if the status is `blocked`, they are seven requests to a site that
+ *      has just told us it is unhappy, which is the worst possible response to bot detection.
+ *   2. The backend is told. The frontend is open in the same browser, so "your Upwork session
+ *      expired" belongs there, next to the board full of jobs that is about to go stale.
+ */
+function sessionProblem(result) {
+  const status = result?.status;
+  return status === "signed_out" || status === "blocked" ? status : null;
+}
+
+/** Stop the run and say why, in words that name the fix rather than the symptom. */
+async function haltForSession(status, detail, done, total) {
+  await publish({
+    cancelled: true,
+    running: false,
+    session: { status, detail, at: Date.now() },
+    current: null,
+    note:
+      status === "signed_out"
+        ? `Stopped after ${done} of ${total} pages — you are signed out. Sign in and collect again.`
+        : `Stopped after ${done} of ${total} pages — the site served a challenge. Leave it a while ` +
+          `before trying again, and read one page at a time.`,
+  });
+  await badge("!", "#a3372c");
+}
+
+async function filePage(page, result, platformId, pushes) {
+  const { pushToBackend, useLlm } = await autoSettings();
+  if (!pushToBackend || !result) return;
+
+  // A session problem is reported *because* there is nothing to store — it is the one failure the
+  // backend needs to hear about, since it is the one the user can fix.
+  const problem = sessionProblem(result);
+  if (!problem && result.error) return;
+
+  // Nothing to send anywhere. Not a failure worth reporting: the extension is meant to be useful
+  // with no backend at all.
+  const { token } = await connection();
+  if (!token) return;
+
+  try {
+    pushes[page.key] = await pushPage({
+      platform: result.platform || platformId,
+      page,
+      result,
+      useLlm,
+    });
+  } catch (err) {
+    pushes[page.key] = { error: String(err?.message || err) };
+  }
+  await setState({ pushes });
 }
 
 /**
@@ -202,7 +351,16 @@ async function waitForTab(tabId) {
 async function readInTab(tabId, func, args = []) {
   const injected = await chrome.scripting.executeScript({
     target: { tabId },
-    files: ["src/content/platforms.js", "src/content/extract.js"],
+    files: [
+      "src/content/platforms.js",
+      "src/content/extract.js",
+      // Order matters: base publishes the class the platform files extend, and extract.js
+      // publishes the helpers base needs.
+      "src/content/readers/base.js",
+      "src/content/readers/upwork.js",
+      "src/content/readers/peopleperhour.js",
+      "src/content/readers/fiverr.js",
+    ],
   });
   const injectError = injected.find((frame) => frame.error)?.error;
   if (injectError) throw new Error(`Injecting the readers failed: ${injectError}`);
@@ -227,27 +385,126 @@ async function readInTab(tabId, func, args = []) {
 }
 
 /**
+ * Get to your own profile, then read it — for the pages that declare `reads: "profile"`.
+ *
+ * Three ways in, cheapest first, and the cheapest needs nothing configured:
+ *
+ *   1. Ask the page we are already on. The account menu is in the header of every page of these
+ *      sites, so by the time a collection reaches this step the answer is right there. This is why
+ *      PeoplePerHour needs no URL at all.
+ *   2. Follow the platform's own self-resolving URL if it has one — Upwork's `/freelancers/`
+ *      redirects to whoever is signed in. Depends on nothing about the markup, so it survives a
+ *      redesign that moves the header.
+ *   3. Give up, and say so.
+ *
+ * Then **verify at the destination**. Following a link is not proof of arrival: a redirect, an
+ * interstitial or a stale link lands you somewhere else, and this is the one page whose contents
+ * overwrite the profile row every score in the app is computed from. A profile that cannot be
+ * confirmed as yours is skipped, not guessed at — the reason lands on the row, and the rest of the
+ * collection carries on, because an unidentifiable profile is no reason to abandon job listings that
+ * are collecting fine.
+ */
+async function readProfileIn(tabId, page, platform) {
+  let found = await readInTab(tabId, () => globalThis.ALExtract.findOwnProfile());
+
+  if (found?.status !== "ok" && (found?.navigateTo || page.url)) {
+    await chrome.tabs.update(tabId, { url: found?.navigateTo || page.url });
+    await sleep(300);
+    await waitForTab(tabId);
+    found = await readInTab(tabId, () => globalThis.ALExtract.findOwnProfile());
+  }
+
+  if (found?.status === "signed_out" || found?.status === "blocked") {
+    return { key: page.key, platform: platform?.id || "unknown", status: found.status, count: 0,
+      error: `Not signed in to ${platform?.label || "this site"}.` };
+  }
+
+  // Already there — arriving via `/freelancers/` lands on the profile itself, so there is nothing
+  // left to follow.
+  const here = await readInTab(tabId, () => location.href);
+  if (found?.status === "ok" && found.url && !here.startsWith(found.url)) {
+    await chrome.tabs.update(tabId, { url: found.url });
+    await sleep(300);
+    await waitForTab(tabId);
+  } else if (found?.status !== "ok") {
+    return {
+      key: page.key,
+      platform: platform?.id || "unknown",
+      count: 0,
+      error:
+        "Couldn't find your own profile — nothing on the page identifies it. Open your profile from " +
+        "the site's account menu once, then collect again.",
+    };
+  }
+
+  const read = await readInTab(tabId, (key) => globalThis.ALExtract.readList(key), [page.key]);
+
+  // The verdict comes from the page we ended up on, not from how we got here.
+  if (read?.profile && read.profile.is_own !== true) {
+    return {
+      ...read,
+      count: 0,
+      profile: undefined,
+      error:
+        read.profile.is_own === false
+          ? "That wasn't your profile, so it wasn't read — storing it would overwrite your own."
+          : "Couldn't confirm that profile is yours, so it wasn't read.",
+    };
+  }
+  return read;
+}
+
+/**
+ * Give a lazily-rendered list time to finish arriving.
+ *
+ * Upwork puts job cards on the page as they come, so the fixed settle after `complete` caught about a
+ * screenful and the rest of the page's own first batch landed unread. This asks the page when it has
+ * stopped, rather than guessing.
+ *
+ * Waiting only. Nothing here scrolls or asks for more — see the constraint at the top of this file.
+ * Never throws: a page that will not settle is still worth reading as far as it got.
+ */
+async function settleList(tabId, page) {
+  if (page.reads !== "jobs") return null;
+  try {
+    await readInTab(tabId, () => globalThis.ALExtract.awaitList());
+    // Then one scroll, because Upwork holds most of the feed back until you ask. Once — see the note
+    // on `loadMoreOnce`; scrolling until it stops giving is pagination, and the only thing between
+    // the two is a number.
+    return await readInTab(tabId, () => globalThis.ALExtract.loadMoreOnce());
+  } catch {
+    // Injection failed or the tab moved. The read that follows reports the real error.
+    return null;
+  }
+}
+
+/**
  * Read a page in a tab, reusing one if given.
  *
  * Sequentially there is no reason to open a tab per page: one tab navigated from URL to URL does
  * the same work while only ever putting a single extra tab on screen. Opening and discarding eight
  * is both alarming to watch and a louder pattern than one tab browsing.
  */
-async function readOnePage(page, reuseTabId = null) {
+async function readOnePage(page, reuseTabId = null, platform = null) {
   let tabId = reuseTabId;
   try {
     if (tabId === null) {
-      // Opened inactive so the collection doesn't yank focus away mid-run.
-      const tab = await chrome.tabs.create({ url: page.url, active: false });
+      // Inactive unless the run asked to be watched: an inactive tab does not yank focus away
+      // mid-run. A profile page may have no URL of its own — it is found from wherever we are — so
+      // fall back to the platform's own entry point for the tab to start from.
+      const tab = await chrome.tabs.create({ url: page.url || platform?.origins?.[0]?.replace(/\*$/, "") , active: showTab });
       tabId = tab.id;
-    } else {
+    } else if (page.url) {
       await chrome.tabs.update(tabId, { url: page.url });
       // `update` resolves before navigation starts; without this the wait can pass against the
       // page we were already on and read the wrong one.
       await sleep(300);
     }
     await waitForTab(tabId);
-    return await readInTab(tabId, (key) => globalThis.ALExtract.readList(key), [page.key]);
+    if (page.reads === "profile") return await readProfileIn(tabId, page, platform);
+    const more = await settleList(tabId, page);
+    const read = await readInTab(tabId, (key) => globalThis.ALExtract.readList(key), [page.key]);
+    return more?.gained ? { ...read, gained_by_scrolling: more.gained } : read;
   } finally {
     // Only close what we own. A reused tab is closed once, by the caller, at the end of the run.
     if (reuseTabId === null && tabId !== null) {
@@ -266,32 +523,58 @@ async function readOnePage(page, reuseTabId = null) {
  * Falls back to a real navigation, in the same tab, whenever the link is not on the current page —
  * there is no path from "Contracts" to "Saved jobs" if the nav does not offer one.
  */
-async function readByClicking(pages, tabId, results, errors, onDone) {
+async function readByClicking(pages, tabId, results, errors, pushes, platformId, onDone) {
   for (const [index, page] of pages.entries()) {
     const { [STATE_KEY]: state = {} } = await chrome.storage.local.get(STATE_KEY);
     if (state.cancelled) return;
 
     await setState({ current: page.label });
     try {
-      const attempt = await readInTab(tabId, (fragment) => globalThis.ALExtract.clickTo(fragment), [page.link]);
+      // A profile page finds its own way in. `readProfileIn` discovers the link, follows it, and
+      // verifies at the destination — clicking here first would be a second, worse attempt at the
+      // same thing: `own_profile` declares `link: "/freelancers/"`, so `clickTo` would grab whatever
+      // freelancer link happened to be visible and then wait for a page it may never have wanted.
+      // That is what failed: the click landed somewhere heavy, `afterRouteChange` never saw it go
+      // quiet, and the throw meant `readProfileIn` never ran at all.
+      if (page.reads !== "profile") {
+        const attempt = await readInTab(tabId, (fragment) => globalThis.ALExtract.clickTo(fragment), [page.link]);
 
-      if (attempt?.already) {
-        // Nothing to navigate to; read where we stand.
-      } else if (attempt?.clicked) {
-        const settled = await readInTab(
-          tabId,
-          (previous) => globalThis.ALExtract.afterRouteChange(previous),
-          [attempt.before]
-        );
-        if (!settled?.ok) throw new Error("The page did not finish rendering after the click.");
-      } else {
-        // No link here — navigate this one directly, still in the same tab.
-        await chrome.tabs.update(tabId, { url: page.url });
-        await sleep(300);
-        await waitForTab(tabId);
+        if (attempt?.already) {
+          // Nothing to navigate to; read where we stand.
+        } else if (attempt?.clicked) {
+          const settled = await readInTab(
+            tabId,
+            (previous) => globalThis.ALExtract.afterRouteChange(previous),
+            [attempt.before]
+          );
+          // Arrived but still busy is not a failure. The URL moved and there is content, and the
+          // list reader waits for its own settling next — so pressing on reads a page that is still
+          // painting, while throwing loses it entirely. Only a click that went nowhere is fatal.
+          if (!settled?.ok && !settled?.moved) {
+            throw new Error("The click did not go anywhere — the page never changed.");
+          }
+        } else {
+          // No link here — navigate this one directly, still in the same tab.
+          await chrome.tabs.update(tabId, { url: page.url });
+          await sleep(300);
+          await waitForTab(tabId);
+        }
       }
 
-      results[page.key] = await readInTab(tabId, (key) => globalThis.ALExtract.readList(key), [page.key]);
+      const more = page.reads === "profile" ? null : await settleList(tabId, page);
+      const read =
+        page.reads === "profile"
+          ? await readProfileIn(tabId, page, PLATFORMS[platformId] || null)
+          : await readInTab(tabId, (key) => globalThis.ALExtract.readList(key), [page.key]);
+      results[page.key] = more?.gained ? { ...read, gained_by_scrolling: more.gained } : read;
+      await filePage(page, results[page.key], platformId, pushes);
+
+      const problem = sessionProblem(results[page.key]);
+      if (problem) {
+        errors[page.key] = results[page.key].error;
+        await haltForSession(problem, results[page.key].error, index + 1, pages.length);
+        return;
+      }
     } catch (err) {
       errors[page.key] = String(err?.message || err);
     }
@@ -306,35 +589,50 @@ async function run(selectedKeys, platformId = null) {
   const all = platformId ? pagesFor(platformId) : PLATFORM_LIST.flatMap((p) => p.pages);
   const pages = all.filter((p) => selectedKeys.includes(p.key));
   if (!pages.length) return;
-  await setState({
+  await publish({
     running: true,
+    platform: platformId,
     cancelled: false,
     done: 0,
     total: pages.length,
     results: {},
     errors: {},
+    pushes: {},
+    // Cleared per run: a sign-in problem from an hour ago must not describe this one.
+    session: null,
+    note: null,
     startedAt: Date.now(),
   });
   await badge("0/" + pages.length);
 
   const results = {};
   const errors = {};
+  // What the backend made of each page, kept separate from `errors`: a page can be read perfectly
+  // and still fail to file, and collapsing the two would make a backend that is merely switched off
+  // look like a broken scraper.
+  const pushes = {};
   let finished = 0;
 
-  const { concurrency = DEFAULT_CONCURRENCY, navigateByClicking = true } = await autoSettings();
+  const settings = await autoSettings();
+  const { concurrency = DEFAULT_CONCURRENCY, navigateByClicking = true } = settings;
+  // Latched for the whole run — including the later description pass in `finish` — so every tab this
+  // run opens honours the one choice.
+  showTab = Boolean(settings.showTab);
 
   // Clicking needs a tab already on Upwork to start from, and only makes sense one page at a time.
   if (navigateByClicking && (Number(concurrency) || 1) === 1) {
-    const platform = platformId ? PLATFORMS[platformId] : null;
-    const [openTab] = platform
-      ? await chrome.tabs.query({ url: `https://*.${platform.id === "peopleperhour" ? "peopleperhour" : platform.id}.com/*` })
-      : [];
+    const platform = platformId ? PLATFORM_LIST.find((p) => p.id === platformId) || null : null;
+    // The platform's own declared origins, not a `*.` wildcard built from its id. The wildcard also
+    // matched community.upwork.com and support.upwork.com — tabs the manifest grants no access to, so
+    // injecting into one failed with "Cannot access contents of url" after the run had already begun.
+    // (The ternary it replaces returned platform.id in both branches, so it never did anything.)
+    const [openTab] = platform ? await chrome.tabs.query({ url: platform.origins }) : [];
     if (openTab) {
-      await readByClicking(pages, openTab.id, results, errors, async (done) => {
-        await setState({ done, results, errors });
+      await readByClicking(pages, openTab.id, results, errors, pushes, platform.id, async (done) => {
+        await publish({ done, results, errors });
         await badge(`${done}/${pages.length}`);
       });
-      await finish(results, errors);
+      await finish(results, errors, pushes, platform.id, pages);
       return;
     }
     await setState({ note: "No tab open on that site — opened one instead of clicking through." });
@@ -351,7 +649,7 @@ async function run(selectedKeys, platformId = null) {
   // One lane means one tab for the whole run, reused. Several lanes each own their own.
   let sharedTabId = null;
   if (lanes === 1) {
-    const tab = await chrome.tabs.create({ url: "about:blank", active: false });
+    const tab = await chrome.tabs.create({ url: "about:blank", active: showTab });
     sharedTabId = tab.id;
   }
 
@@ -364,16 +662,28 @@ async function run(selectedKeys, platformId = null) {
       if (!page) return;
 
       await setState({ current: page.label });
+      let problem = null;
       try {
-        results[page.key] = await readOnePage(page, sharedTabId);
+        results[page.key] = await readOnePage(page, sharedTabId, PLATFORMS[platformId] || null);
+        await filePage(page, results[page.key], platformId, pushes);
+        problem = sessionProblem(results[page.key]);
+        if (problem) errors[page.key] = results[page.key].error;
       } catch (err) {
         // One unreachable page must not end the run — the rest are still worth having.
         errors[page.key] = String(err?.message || err);
       }
 
       finished += 1;
-      await setState({ done: finished, results, errors });
+      await publish({ done: finished, results, errors });
       await badge(`${finished}/${pages.length}`);
+
+      // A wall in front of one page is a wall in front of all of them. Emptying the queue stops the
+      // other lanes too — they check `cancelled` at the top of each turn.
+      if (problem) {
+        queue.length = 0;
+        await haltForSession(problem, results[page.key].error, finished, pages.length);
+        return;
+      }
 
       // Only meaningful when a lane has more work waiting. Running fully in parallel each lane
       // takes one page and the queue is empty, so no pause happens at all.
@@ -384,32 +694,54 @@ async function run(selectedKeys, platformId = null) {
   await Promise.all(Array.from({ length: lanes }, () => lane()));
   if (sharedTabId !== null) await chrome.tabs.remove(sharedTabId).catch(() => {});
 
-  await finish(results, errors);
+  await finish(results, errors, pushes, platformId, pages);
 }
 
 /** Optional per-job description pass, then mark the run complete. */
-async function finish(results, errors) {
+async function finish(results, errors, pushes = {}, platformId = null, pages = []) {
   const { fullDescriptions = false, concurrency = DEFAULT_CONCURRENCY } = await autoSettings();
   const lanes = Number(concurrency) || 1;
   if (fullDescriptions) {
     const { [STATE_KEY]: state = {} } = await chrome.storage.local.get(STATE_KEY);
     if (!state.cancelled) {
       await setState({ current: "Full descriptions", phase: "descriptions" });
-      const summary = await deepenDescriptions(results, lanes, async (done, total, live) => {
-        await setState({ descDone: done, descTotal: total, results: live });
-        await badge(`${done}/${total}`);
-      });
+      const { pushToBackend } = await autoSettings();
+      const { token } = await connection();
+      const fileAsWeGo = Boolean(pushToBackend && token);
+
+      const summary = await deepenDescriptions(
+        results,
+        lanes,
+        async (done, total, live) => {
+          await setState({ descDone: done, descTotal: total, results: live });
+          await badge(`${done}/${total}`);
+        },
+        fileAsWeGo
+      );
       await setState({ descSummary: summary });
+
+      // A backstop, not the delivery. Each batch was filed as it was read, so this only re-sends
+      // pages whose jobs were deepened but whose batch never made it — and the upsert is on
+      // (platform, external_id), so re-sending one already stored updates it rather than twinning it.
+      if (summary.deepened && !fileAsWeGo) {
+        await setState({ current: "Filing full descriptions", phase: "refiling" });
+        for (const page of pages) {
+          if ((results[page.key]?.jobs || []).length) {
+            await filePage(page, results[page.key], platformId, pushes);
+          }
+        }
+      }
     }
   }
 
-  await setState({
+  await publish({
     running: false,
     current: null,
     phase: null,
     finishedAt: Date.now(),
     results,
     errors,
+    pushes,
   });
   const failed = Object.keys(errors).length;
   await badge(failed ? String(failed) : "", failed ? "#a3372c" : "#14563f");
@@ -424,7 +756,7 @@ async function finish(results, errors) {
  * genuinely partial no matter how well it is parsed. This is the only way to the whole text, and it
  * costs one page load per job, which is why it is off unless asked for.
  */
-async function deepenDescriptions(results, lanes, onProgress) {
+async function deepenDescriptions(results, lanes, onProgress, fileAsWeGo = false) {
   const jobs = Object.values(results)
     .flatMap((page) => page?.jobs || [])
     .filter((job) => job?.url && !job.description_complete);
@@ -438,6 +770,33 @@ async function deepenDescriptions(results, lanes, onProgress) {
   let deepened = 0;
   let failed = 0;
 
+  /**
+   * Jobs read but not yet filed, flushed once there are enough of them.
+   *
+   * The pass reads one job per page load and used to hold every result until it had read them all —
+   * so a run stopped at job 28 of 31 filed nothing, having spent twenty-eight page loads for it.
+   * Flushing as it goes means what has been read stays read.
+   *
+   * Ten, because the cost being saved is round trips rather than bytes: smaller batches are more
+   * requests during a run that is already pacing itself, and larger ones put more work at risk of
+   * being lost to a cancel.
+   */
+  const BATCH = 10;
+  const pending = [];
+  let filed = 0;
+
+  async function flush(force = false) {
+    if (!pending.length || (!force && pending.length < BATCH)) return;
+    const batch = pending.splice(0, pending.length);
+    try {
+      const result = await pushPostings(batch);
+      filed += result?.stored ?? batch.length;
+    } catch {
+      // The descriptions are already written into `results`, so the end-of-run file still carries
+      // them. Losing a batch costs the head start, not the work.
+    }
+  }
+
   async function lane() {
     // One tab per lane, navigated job to job, closed when the lane runs dry.
     let tabId = null;
@@ -450,7 +809,7 @@ async function deepenDescriptions(results, lanes, onProgress) {
       if (!job) return;
 
       if (tabId === null) {
-        const tab = await chrome.tabs.create({ url: job.url, active: false });
+        const tab = await chrome.tabs.create({ url: job.url, active: showTab });
         tabId = tab.id;
       } else {
         await chrome.tabs.update(tabId, { url: job.url });
@@ -473,6 +832,13 @@ async function deepenDescriptions(results, lanes, onProgress) {
             }
           }
           deepened += 1;
+
+          // Filed as it is read, not held to the end. `readJob` output is already the shape the
+          // batch endpoint takes.
+          if (fileAsWeGo) {
+            pending.push(result);
+            await flush();
+          }
         } else {
           failed += 1;
           problems[job.external_id] ||= "no result returned";
@@ -492,7 +858,9 @@ async function deepenDescriptions(results, lanes, onProgress) {
   }
 
   await Promise.all(Array.from({ length: Math.min(lanes, unique.length) }, () => lane()));
-  return { deepened, failed, problems };
+  // Whatever is left over, however few.
+  if (fileAsWeGo) await flush(true);
+  return { deepened, failed, filed, problems };
 }
 
 /**
@@ -521,7 +889,9 @@ async function autoSettings() {
   return {
     concurrency: DEFAULT_CONCURRENCY,
     fullDescriptions: false,
+    showTab: false,
     keys: DEFAULT_KEYS,
+    ...PUSH_DEFAULTS,
     ...stored,
   };
 }
@@ -540,7 +910,7 @@ chrome.runtime.onMessage.addListener((message, _sender, respond) => {
     return true;
   }
   if (message?.type === "collect:cancel") {
-    void setState({ cancelled: true, running: false });
+    void publish({ cancelled: true, running: false });
     respond({ cancelled: true });
     return true;
   }
@@ -549,7 +919,7 @@ chrome.runtime.onMessage.addListener((message, _sender, respond) => {
     // Either "what site is this tab on" or "give me this named platform" — the popup uses the
     // second when you are not on a marketplace and pick one from the list.
     const platform = message.platformId
-      ? PLATFORMS[message.platformId] || null
+      ? PLATFORM_LIST.find((p) => p.id === message.platformId) || null
       : message.url
         ? platformForUrl(message.url)
         : null;

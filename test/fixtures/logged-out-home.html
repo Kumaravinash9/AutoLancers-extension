@@ -1,0 +1,38 @@
+<!doctype html><html><head><title>Upwork | The World's Work Marketplace</title></head><body>
+<!--
+  upwork.com as a signed-out visitor sees it, from a real screenshot.
+
+  The page this fixture exists for was reported as "isn't one AutoLancers reads directly" — true, but
+  the useless truth. It is not a job page and not a profile page, so the page-type check is right; what
+  it misses is *why*, which is that nobody is signed in. A person looking at this does not need to be
+  told the URL is unsupported. They need to be told to log in.
+
+  Note what makes it decidable without reading prose: the header offers Log in and Sign up, and
+  carries no link to anyone's own profile. A signed-in header always carries that link — it is how
+  `findOwnProfile` works at all — so the two together are structural rather than textual.
+-->
+<header>
+  <nav>
+    <a href="/">upwork</a>
+    <a href="/hire/">Hire talent</a>
+    <a href="/get-outcomes/">Get outcomes</a>
+    <a href="/find-work/">Find work</a>
+    <a href="/why-upwork/">Why Upwork</a>
+    <a href="/pricing/">Pricing</a>
+    <a href="/enterprise/">Enterprise</a>
+    <a href="/ab/account-security/login">Log in</a>
+    <a href="/nx/signup/">Sign up</a>
+  </nav>
+</header>
+
+<main>
+  <p>Stop doing everything. Hire the top 1% of talent on Business Plus.</p>
+  <h1>Connecting businesses in need to freelancers who deliver</h1>
+  <div>
+    <button>Find talent</button>
+    <button>Browse jobs</button>
+    <input type="search" placeholder="Search by role, skills, or keywords" />
+  </div>
+  <h2>Explore millions of pros</h2>
+</main>
+</body></html>

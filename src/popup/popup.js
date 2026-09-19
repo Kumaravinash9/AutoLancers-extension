@@ -10,6 +10,8 @@
  * the site for you.
  */
 
+import { PUSH_DEFAULTS, describePush, pushPosting, pushProfile } from "../background/api.js";
+
 const $ = (id) => document.getElementById(id);
 const main = $("main");
 
@@ -29,7 +31,16 @@ async function readPage(fn) {
   const tab = await activeTab();
   const injected = await chrome.scripting.executeScript({
     target: { tabId: tab.id },
-    files: ["src/content/platforms.js", "src/content/extract.js"],
+    files: [
+      "src/content/platforms.js",
+      "src/content/extract.js",
+      // Order matters: base publishes the class the platform files extend, and extract.js
+      // publishes the helpers base needs.
+      "src/content/readers/base.js",
+      "src/content/readers/upwork.js",
+      "src/content/readers/peopleperhour.js",
+      "src/content/readers/fiverr.js",
+    ],
   });
   const injectError = injected.find((frame) => frame.error)?.error;
   if (injectError) throw new Error(`Couldn't load the readers: ${injectError}`);
@@ -203,16 +214,18 @@ function renderScraped(data, kind) {
   // because you chose it — not because a selector quietly broke.
   $("ai").addEventListener("click", async () => {
     const { apiUrl, token } = await settings();
-    if (!token) {
-      $("ai").textContent = "Needs a token — see Settings";
-      return;
-    }
+    // No token needed. `/ingest/parse` stores nothing — it hands back what the model read so you can
+    // judge it before deciding to send anything — so it accepts an anonymous call while
+    // PARSE_REQUIRES_AUTH is off. A token is still sent when there is one, so the call is attributed.
     $("ai").textContent = "Reading…";
     try {
       const page = await readPage("readText");
       const response = await fetch(`${apiUrl}/ingest/parse`, {
         method: "POST",
-        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+        headers: {
+          "content-type": "application/json",
+          ...(token ? { authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({ kind, url: page.url, text: page.text }),
       });
       const body = await response.json();
@@ -245,23 +258,25 @@ function renderScraped(data, kind) {
 
 /** Only offered when a token exists. Without one there is nothing useful to show here. */
 async function offerSend(data, kind) {
-  const { apiUrl, token } = await settings();
+  const { token } = await settings();
   if (!token) return;
+
+  // Single-job send (/ingest/ondemand/job-posting) is disabled for now — it conflicts with the
+  // collect flow. Remove this guard to re-enable it; pushPosting and the endpoint are untouched.
+  if (kind === "job") {
+    $("send").innerHTML =
+      '<p class="small">Sending a single job is off for now — use <b>Collect</b> instead.</p>';
+    return;
+  }
 
   $("send").innerHTML = '<button id="push" class="ghost">Send to AutoLancers</button>';
   $("push").addEventListener("click", async () => {
     $("push").disabled = true;
     $("push").textContent = "Sending…";
     try {
-      const path = kind === "job" ? "/ingest/posting" : "/ingest/profile";
-      const response = await fetch(`${apiUrl}${path}`, {
-        method: "POST",
-        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-        body: JSON.stringify(data),
-      });
-      if (response.status === 401) throw new Error("Token rejected — issue a new one in Settings.");
-      if (!response.ok) throw new Error(`Backend answered ${response.status}`);
-      const saved = await response.json();
+      // The same client as the collector uses, so a job stored from its own page and one stored from
+      // a listing agree on the shape they arrive in — and on how a 401 is worded.
+      const saved = kind === "job" ? await pushPosting(data) : await pushProfile(data);
       $("send").innerHTML =
         kind === "job"
           ? `<p class="scored">Scored <b>${Math.round(saved.score)}</b>${
@@ -285,17 +300,44 @@ const STATE_KEY = "collect.state";
 /**
  * Which pages start ticked.
  *
- * Job listings only. Messages stays off because that list is two-party data — the other half
- * belongs to someone who never agreed to any of this — and orders and contracts are rarely what
- * someone is after on a first run.
+ * Job listings, plus your own profile — which is your data, and is what every score is computed
+ * against, so a board built without it is scored against nothing.
+ *
+ * Messages stays off because that list is two-party data — the other half belongs to someone who
+ * never agreed to any of this — and orders and contracts are rarely what someone is after on a
+ * first run.
  */
-const DEFAULT_ON = /(best_matches|most_recent|saved_jobs|invites|pph_feed|fvr_briefs)/;
+const DEFAULT_ON = /(own_profile|pph_profile|best_matches|most_recent|saved_jobs|invites|pph_feed|fvr_briefs)/;
 
-let REGISTRY = null;
+/**
+ * Answers already asked for, keyed by what was asked.
+ *
+ * One entry per question rather than one for the whole popup. The single slot it replaces ignored its
+ * argument entirely — the first answer was returned for every later call, whatever URL or platform it
+ * was given — so the one caller that genuinely needed a different marketplace had to go around the
+ * cache and send its own message. Two routes to the same question is how they end up disagreeing.
+ *
+ * The **promise** is cached, not the result, so callers landing in the same tick share one message
+ * rather than each starting their own. A popup opened and driven quickly — pick a marketplace, start,
+ * reopen, pick another — asks each distinct question once and no question twice.
+ */
+const REGISTRIES = new Map();
 
-async function registry(url) {
-  if (!REGISTRY) REGISTRY = await chrome.runtime.sendMessage({ type: "collect:pages", url });
-  return REGISTRY;
+/**
+ * Which marketplace a tab is on and what can be collected there, from the worker's own table.
+ *
+ * Asked of the worker rather than read from `platforms.js` here, because the worker's copy is the one
+ * a collection actually navigates with — so the popup lists exactly the pages the worker will visit.
+ *
+ * Answer one of two ways: by URL, meaning "what site is this tab on", or by `platformId`, meaning
+ * "give me this named marketplace" — which is what the picker uses when you are not on one.
+ */
+async function registry({ url = null, platformId = null } = {}) {
+  const key = platformId ? `platform:${platformId}` : `url:${url ?? ""}`;
+  if (!REGISTRIES.has(key)) {
+    REGISTRIES.set(key, chrome.runtime.sendMessage({ type: "collect:pages", url, platformId }));
+  }
+  return REGISTRIES.get(key);
 }
 
 const PAGE_KINDS = [
@@ -311,11 +353,16 @@ const PAGE_KINDS = [
  */
 async function renderCollect(forPlatform = null) {
   const tab = await activeTab();
-  const reg = forPlatform
-    ? await chrome.runtime.sendMessage({ type: "collect:pages", platformId: forPlatform })
-    : await registry(tab?.url);
+  const reg = await registry(forPlatform ? { platformId: forPlatform } : { url: tab?.url });
   const { pages, platform, label } = reg;
   const { [STATE_KEY]: state = {} } = await chrome.storage.local.get(STATE_KEY);
+  const { "collect.settings": collectSettings = {} } =
+    await chrome.storage.local.get("collect.settings");
+  const push = { ...PUSH_DEFAULTS, ...collectSettings };
+  console.log("renderCollect", reg, state, collectSettings, push);
+  // Filing needs somewhere to file to. Without a token the two controls below would promise
+  // something that cannot happen, so they are simply not offered.
+  const { token } = await settings();
 
   main.innerHTML = `
     <p class="muted small">${escape(label || "This site")} — walks these pages one at a time, in a
@@ -329,10 +376,24 @@ async function renderCollect(forPlatform = null) {
       )
       .join("")}</div>
     <label class="check deep">
-      <input id="deep" type="checkbox" />
+      <input id="deep" type="checkbox" ${collectSettings.fullDescriptions ? "checked" : ""} />
       <span>Also open each job for its full description
         <em>listings only show a preview — one page load per job</em></span>
     </label>
+    ${
+      token
+        ? `<label class="check deep">
+             <input id="push-on" type="checkbox" ${push.pushToBackend ? "checked" : ""} />
+             <span>Send each page to AutoLancers as it finishes
+               <em>every job listing becomes a project, deduped by its marketplace id</em></span>
+           </label>
+           <label class="check deep">
+             <input id="push-llm" type="checkbox" ${push.useLlm ? "checked" : ""} />
+             <span>Let the AI fill fields the selectors missed
+               <em>costs tokens per page — only runs when something is actually missing</em></span>
+           </label>`
+        : `<p class="muted small">Add a token in Settings to file what this collects.</p>`
+    }
     <div class="buttons">
       <button id="go">Collect</button>
       <button id="back" class="ghost">Back</button>
@@ -345,8 +406,17 @@ async function renderCollect(forPlatform = null) {
     const keys = [...document.querySelectorAll(".checks input:checked")].map((i) => i.value);
     if (!keys.length) return;
     const { "collect.settings": stored = {} } = await chrome.storage.local.get("collect.settings");
+    console.log("collect.settings", stored, keys, platform, $("deep").checked, $("push-on")?.checked, $("push-llm")?.checked);
     await chrome.storage.local.set({
-      "collect.settings": { ...stored, fullDescriptions: $("deep").checked },
+      "collect.settings": {
+        ...stored,
+        fullDescriptions: $("deep").checked,
+        // Left alone when there is no token, so a run without one cannot silently clear a choice
+        // made while one was configured.
+        ...(token
+          ? { pushToBackend: $("push-on").checked, useLlm: $("push-llm").checked }
+          : {}),
+      },
     });
     await chrome.runtime.sendMessage({ type: "collect:start", keys, platform });
     main.innerHTML = '<div id="progress"></div>';
@@ -369,6 +439,7 @@ async function renderCollect(forPlatform = null) {
 function exportRow(page, state) {
   const result = (state.results || {})[page.key];
   const failure = (state.errors || {})[page.key];
+  const push = (state.pushes || {})[page.key];
   const active = state.running && state.current === page.label;
 
   let status = "pending";
@@ -384,10 +455,17 @@ function exportRow(page, state) {
     value = "reading…";
   }
 
+  // What the backend made of it, on its own line. A page can be read perfectly and still fail to
+  // file — a token that expired, a backend that isn't running — and one shared status would report
+  // that as a scrape failure, sending someone to debug the wrong half.
+  const filed = push
+    ? `<span class="step-filed ${push.error ? "failed" : ""}">${escape(describePush(push))}</span>`
+    : "";
+
   return `<li class="step ${status}">
     <span class="dot" aria-hidden="true"></span>
     <span class="step-label">${escape(page.label)}</span>
-    <span class="step-value">${value}</span>
+    <span class="step-value">${value}${filed}</span>
   </li>`;
 }
 
@@ -406,14 +484,28 @@ async function watch(pages) {
     const failed = Object.keys(state.errors || {}).length;
     const pct = total ? Math.round((done / total) * 100) : 0;
 
+    // Filing is reported separately from reading throughout: they fail for unrelated reasons.
+    const pushes = Object.values(state.pushes || {});
+    const stored = pushes.reduce((sum, p) => sum + (p?.stored || 0), 0);
+    const unfiled = pushes.filter((p) => p?.error).length;
+
     progress.innerHTML = `
+      ${
+        // A stopped run needs its reason at the top, not buried in a red row halfway down a list.
+        // "You are signed out" is the whole story, and it names its own fix.
+        state.session
+          ? `<p class="error">${escape(state.note || state.session.detail)}</p>`
+          : ""
+      }
       ${
         state.running
           ? `<p class="exporting"><span class="spin" aria-hidden="true"></span>
                ${
                  state.phase === "descriptions"
                    ? `Reading full descriptions… ${state.descDone ?? 0} of ${state.descTotal ?? 0}`
-                   : "Exporting data from your profile…"
+                   : state.phase === "refiling"
+                     ? "Filing the full descriptions…"
+                     : "Exporting data from your profile…"
                }</p>`
           : `<p class="exporting done-head"><span class="tick" aria-hidden="true">✓</span>
                Export complete</p>`
@@ -423,7 +515,7 @@ async function watch(pages) {
       </div>
       <p class="muted small bar-note">${done} of ${total} pages${found ? ` · ${found} items` : ""}${
         failed ? ` · ${failed} failed` : ""
-      }</p>
+      }${stored ? ` · ${stored} filed` : ""}${unfiled ? ` · ${unfiled} not filed` : ""}</p>
       <ul class="steps">${pages.map((p) => exportRow(p, state)).join("")}</ul>
       ${
         state.running
@@ -457,13 +549,14 @@ async function start() {
 
   if (running.running) {
     // A collection in flight is the most important thing on screen; the page reader can wait.
-    const { pages } = await registry(tab?.url);
+    const { pages } = await registry({ url: tab?.url });
     main.innerHTML = '<div id="progress"></div>';
     void watch(pages);
     return;
   }
 
-  const reg = await registry(tab?.url);
+  const reg = await registry({ url: tab?.url });
+  console.log("registry", reg, tab?.url);
 
   if (!reg.platform) {
     // Off a supported site the page readers have nothing to read, but a collection still can —
@@ -480,8 +573,27 @@ async function start() {
     return;
   }
 
-  // Which kind of page, asked of the platform itself.
+  // Which kind of page, asked of the platform itself. Answers "signed_out" or "blocked" before it
+  // answers a page type, because that is the useful reply — and because the login page really isn't a
+  // page we read, so the generic decline below would be true and useless at the same time.
   const kind = await readPage("whichPage");
+
+  if (kind === "signed_out" || kind === "blocked") {
+    main.innerHTML = `
+      <p class="error">${
+        kind === "signed_out"
+          ? `You're not signed in to ${escape(reg.label)}.`
+          : `${escape(reg.label)} served a challenge page instead of the content.`
+      }</p>
+      <p class="muted small">${
+        kind === "signed_out"
+          ? "Sign in in this tab, then reopen this."
+          : "Leave it a while before trying again, and keep the collector at one page at a time."
+      }</p>
+      <div class="buttons"><button id="again" class="ghost">Try again</button></div>`;
+    $("again").addEventListener("click", () => start());
+    return;
+  }
 
   if (!kind || kind === "other") {
     main.innerHTML = `

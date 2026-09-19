@@ -1,0 +1,54 @@
+<!doctype html><html><head>
+<title>Build a Next.js reporting dashboard - PeoplePerHour</title>
+<!--
+  A PeoplePerHour job page, built on the anchors that are *not* Upwork's.
+
+  That is the point of this fixture rather than an accident of it. There is no `data-test` attribute
+  anywhere, no `air3-*` class, and the title is not "… - Upwork Freelancer from City, Country". So it
+  exercises the path a non-Upwork site takes — structured data, `itemprop`, headings, and the text
+  next to a visible label — which is precisely what breaks if Upwork's selectors are moved into a
+  subclass carelessly and the generic fallbacks go with them.
+
+  Shapes only, like the Upwork fixtures: a copy of how these pages are put together, not a guarantee
+  that PeoplePerHour's live markup still matches.
+-->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "JobPosting",
+  "title": "Build a Next.js reporting dashboard",
+  "description": "<p>We need a reporting dashboard over our existing Postgres warehouse. Live exception queues for the ops team, and a weekly export the finance team can open in Excel.</p>",
+  "datePosted": "2026-07-29T11:30:00Z"
+}
+</script>
+</head><body>
+<header><nav><a href="/freelance-jobs">Browse jobs</a></nav></header>
+<main>
+  <h1>Build a Next.js reporting dashboard</h1>
+
+  <div>
+    <span>Fixed Price</span>
+    <span>Budget: £1,200</span>
+    <span>Posted 4 hours ago</span>
+  </div>
+
+  <div><span>Proposals</span> <span>7</span></div>
+  <div><span>Experience Level</span> <span>Intermediate</span></div>
+  <div><span>Project Length</span> <span>1 to 3 months</span></div>
+
+  <section>
+    <h2>Skills</h2>
+    <span class="skill-token">Next.js</span>
+    <span class="skill-token">PostgreSQL</span>
+    <span class="skill-token">TypeScript</span>
+  </section>
+
+  <section>
+    <h2>About the client</h2>
+    <div><span>United Kingdom</span></div>
+    <div><span>4.9</span> <span>from 23 reviews</span></div>
+    <div><span>total spent</span> <span>£18,400</span></div>
+    <div>Payment method verified</div>
+  </section>
+</main>
+</body></html>

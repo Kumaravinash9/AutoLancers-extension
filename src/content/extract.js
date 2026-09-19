@@ -62,18 +62,110 @@ function clean(text) {
 }
 
 /**
+ * The page's text with the furniture removed — what a person would say the page says.
+ *
+ * The label readers below scan the whole page, so anything floating on top of it is *in* their input.
+ * A "Boost your profile" card open over a real profile advertised "Total earnings $250K" and "Total
+ * jobs 999", and both won: the reader took the modal's marketing numbers over the page's own 40K and
+ * 134. Section walking had always excluded overlays; the text readers never did.
+ *
+ * Stripped rather than dismissed. Closing a card means clicking it, and a click on someone's account
+ * is an action — it can accept cookies, silence a notification for good, or opt them into something.
+ * Everything here reads; the single deliberate exception is `clickTo`, which navigates because that is
+ * what it is for. Ignoring an overlay costs nothing and changes nothing.
+ */
+function visibleText() {
+  const body = document.body;
+  if (!body) return "";
+  const copy = body.cloneNode(true);
+  for (const node of copy.querySelectorAll(`script, style, ${OVERLAY}`)) node.remove();
+  return copy.innerText || "";
+}
+
+/**
  * The text sitting next to a visible label.
  *
  * Upwork renders most statistics as a label/value pair with no stable attribute on either — "Total
  * earnings" above "$40K", "Job Success" beside "98%". Matching on the words a human reads survives
  * a class-name change, which is the most common kind of drift.
  */
-function nearLabel(label, { after = 120 } = {}) {
-  const body = document.body?.innerText || "";
-  const at = body.search(new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"));
+function nearLabel(label, { after = 120, text = null } = {}) {
+  const body = text ?? visibleText();
+  // `label` is a pattern, not a literal. It used to be escaped here and *not* escaped two lines
+  // below, so the two halves disagreed: the search looked for a literal "|" while the strip treated
+  // it as alternation. Every call carrying a `|` or a `?` therefore found nothing and returned null,
+  // always — ten of them, including Availability, timezone, rating, reviews, hours/week and connects.
+  // They had never once populated. Escaping is what a caller wanting a literal does to its own
+  // string; guessing on its behalf is what broke this.
+  const pattern = new RegExp(label, "i");
+  const at = body.search(pattern);
   if (at === -1) return null;
-  const window_ = body.slice(at, at + after).replace(new RegExp(label, "i"), "");
+  const window_ = body.slice(at, at + after).replace(pattern, "");
   return clean(window_.split("\n").filter(Boolean)[0] || "") || null;
+}
+
+/**
+ * Money written near a label — the first currency figure, not the first number.
+ *
+ * `nearLabel` plus `toRange` is wrong for money, and wrong in the expensive direction. `innerText`
+ * puts a whole row on one line, so the window after "Budget" on a PeoplePerHour job read
+ * "Budget: £1,200 Posted 4 hours ago" — and taking every number in it produced a budget of **4 to
+ * 1200**. A wrong budget is worse than a missing one: the backend compares it against a floor, so it
+ * silently mis-scores rather than skipping the filter.
+ *
+ * Requiring a currency symbol is what makes it adjacency-safe. "4 hours" has none.
+ */
+function moneyNear(pattern, { after = 80, text = null } = {}) {
+  const body = text ?? visibleText();
+  const at = body.search(new RegExp(pattern, "i"));
+  if (at === -1) return null;
+  const found = body
+    .slice(at, at + after)
+    .match(/[$£€₹]\s?[\d][\d,]*(?:\.\d+)?\s*[KM]?(?:\s*(?:-|–|to)\s*[$£€₹]?\s?[\d][\d,]*(?:\.\d+)?\s*[KM]?)?/i);
+  return found ? clean(found[0]) : null;
+}
+
+/**
+ * A count next to a label, on whichever side the marketplace put it.
+ *
+ * `nearLabel` takes the first line *after* the label, which assumes a label-then-value layout. Plenty
+ * of pages write it the other way round — "from 23 reviews" — and then the line after the label is
+ * something else entirely: that read `client.reviews` as **18400**, the total-spent figure two lines
+ * down. So this looks on the label's own line first, and takes the number closest to it.
+ *
+ * Both bugs were invisible until `nearLabel` was fixed to honour its own patterns: `"reviews?"` had
+ * never matched anything, so the field had always been null. Repairing one bug is what exposed them,
+ * which is the argument for the fixtures that caught them rather than for leaving it alone.
+ */
+function numberNear(pattern, { lines = 2, text = null } = {}) {
+  const body = text ?? visibleText();
+  const re = new RegExp(pattern, "i");
+  const rows = body.split("\n");
+  const index = rows.findIndex((row) => re.test(row));
+  if (index === -1) return null;
+
+  // The label's own line first, and never past a line boundary by character distance. A character
+  // window looked adjacent across a newline: on a PeoplePerHour profile "Total hours 2,410" sits
+  // directly above "reviews 96", and 2,410 ended one character before the word "reviews" — so the
+  // review count came back as the hours. A line is the unit a person reads a label/value pair in.
+  const own = rows[index];
+  const labelAt = own.search(re);
+  let best = null;
+  for (const match of own.matchAll(/[\d][\d,]*(?:\.\d+)?\s*[KM]?/gi)) {
+    const end = match.index + match[0].length;
+    // Closest wins, not first: "4.9 from 23 reviews" holds the rating and the review count on one
+    // line, and the count is the one beside the word.
+    const distance = end <= labelAt ? labelAt - end : match.index - labelAt;
+    if (best === null || distance < best.distance) best = { text: match[0], distance };
+  }
+  if (best) return toNumber(best.text);
+
+  // Then the lines below, which is how a label stacked above its value reads: "Total earnings" / "$40K".
+  for (const row of rows.slice(index + 1, index + lines)) {
+    const found = row.match(/[\d][\d,]*(?:\.\d+)?\s*[KM]?/i);
+    if (found) return toNumber(found[0]);
+  }
+  return null;
 }
 
 /** First number in a string, tolerating $, commas, K/M suffixes and ranges. Null if none. */
@@ -98,11 +190,22 @@ function toRange(text) {
   return [Math.min(...numbers), Math.max(...numbers)];
 }
 
+/**
+ * The currency a figure is written in, or `null` when the text does not say.
+ *
+ * `null`, not `"USD"`. Defaulting to dollars is not a harmless convenience: the backend states budget
+ * floors in a currency and compares against them, so a £1,200 job labelled USD is measured against
+ * the wrong number rather than skipped. A PeoplePerHour job page — where no selector here finds the
+ * budget text at all — was arriving as `currency: "USD"` with `budget_min: null`, which is a value
+ * asserted about a figure we never read. Everything else in this file returns null when it cannot
+ * tell; this was the one exception, and it was wrong for the same reason the others are right.
+ */
 function currencyOf(text) {
   if (/£/.test(text || "")) return "GBP";
   if (/€/.test(text || "")) return "EUR";
   if (/₹/.test(text || "")) return "INR";
-  return "USD";
+  if (/\$/.test(text || "")) return "USD";
+  return null;
 }
 
 /**
@@ -140,10 +243,17 @@ function meta(...names) {
   return null;
 }
 
+/**
+ * A href as an absolute URL.
+ *
+ * Resolved against the current page rather than against the origin. Almost every link here is
+ * root-relative (`/jobs/~021…`) and the two agree on those, but a genuinely relative href —
+ * `settings/contactInfo` next to `/freelancers/` — resolves to the wrong path against a bare origin.
+ */
 function absolute(url) {
   if (!url) return null;
   try {
-    return new URL(url, location.origin).href;
+    return new URL(url, location.href).href;
   } catch {
     return null;
   }
@@ -181,7 +291,28 @@ function canonicalJobUrl(url) {
  * returned every item in the "complete your profile" checklist. A heading owns the content that
  * follows it until the next heading of equal or greater rank, and nothing else.
  */
-const OVERLAY = "[class*='popper'], [class*='popover'], [class*='tooltip'], [role='tooltip'], [role='dialog'], nav, header, footer";
+/**
+ * Things that float over a page rather than being part of it.
+ *
+ * The `:not(...)` halves matter as much as the matches. A tooltip has two parts — the panel, which is
+ * an overlay, and the *trigger*, which is ordinary page content that happens to be named after it.
+ * Upwork wraps four of its skill chips in `skill-tooltip-reference air3-popper-trigger`, and matching
+ * those as overlay silently dropped every skill that carried a definition popover: Artificial
+ * Intelligence, Web Development, Product Development and one more were missing from a real profile
+ * while the six chips with no tooltip came through fine.
+ *
+ * Excluding by the trigger/reference suffix rather than by Upwork's class names, because those two
+ * words are what tooltip libraries generally call the thing you point at. The panel itself carries
+ * neither, so the Wikipedia blurbs inside it stay excluded.
+ */
+const OVERLAY = [
+  "[class*='popper']:not([class*='trigger'])",
+  "[class*='popover']:not([class*='trigger'])",
+  "[class*='tooltip']:not([class*='reference']):not([class*='trigger'])",
+  "[role='tooltip']",
+  "[role='dialog']",
+  "nav", "header", "footer",
+].join(", ");
 
 /** Overlay and navigation chrome is not document structure — it must not split or fill a section. */
 function isChrome(node) {
@@ -201,8 +332,22 @@ function sectionNodes(pattern) {
   const rank = Number(start.tagName[1]);
   const stop = headings.slice(index + 1).find((node) => Number(node.tagName[1]) <= rank) || null;
 
+  /**
+   * A section also ends where the card holding it ends.
+   *
+   * Rank alone is not enough: it closes a section at the next heading of the same or higher level, so
+   * anything headed *deeper* is swallowed however far away it sits. A `<h5>Linked accounts</h5>` card
+   * two blocks below "Employment history" was read as a fourth job, because h5 never closes an h3.
+   *
+   * Deeper headings genuinely belong to a section — a Work history h4 holds h5 entries, and closing on
+   * any heading at all would empty that field — so the boundary has to come from the markup instead.
+   * The enclosing `section` or `article` is that boundary where a page provides one, and where it does
+   * not this behaves exactly as before rather than guessing at `div` nesting.
+   */
+  const container = start.closest("section, article") || document.body;
+
   const out = [];
-  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_ELEMENT);
   let inRange = false;
   let node;
   while ((node = walker.nextNode())) {
@@ -239,22 +384,44 @@ function headingLike(regex) {
   return null;
 }
 
+// --- which reader reads this page ----------------------------------------------------
+
 /**
- * Upwork's <title> is "Name - Tagline - Upwork Freelancer from City, Country".
+ * The shared helpers the reader classes need, published for the files that hold them.
  *
- * Written for search engines, so it outlives redesigns that move every element on the page — and
- * it carries the tagline, which has no attribute of its own.
+ * Eleven of them, out of the thousand-odd lines here. That ratio is still the argument for the split
+ * being where it is: the readers live in their own files because each marketplace's DOM is its own
+ * problem, while the machinery for walking a DOM is not per-marketplace at all and stays put.
+ *
+ * The last four joined when finding a rate and finding a skill chip moved onto the readers. Both were
+ * written from one site's markup and applied to all of them, which is the failure this whole split
+ * exists to prevent — a site's answer must be changeable without touching anyone else's.
+ *
+ * Published before `readers/*.js` are evaluated — `executeScript({files})` runs them in the order
+ * given, and the injection lists in `popup.js` and `worker.js` put this file first.
  */
-function fromTitle() {
-  const parts = clean(document.title).split(/\s+-\s+/);
-  const where = parts.find((p) => /Upwork Freelancer from/i.test(p)) || "";
-  const [city, country] = where.replace(/.*from\s*/i, "").split(/,\s*/);
-  return {
-    name: parts[0] || null,
-    tagline: parts.length > 2 ? parts[1] : null,
-    city: clean(city) || null,
-    country: clean(country) || null,
-  };
+globalThis.ALExtractKit = {
+  clean, structuredData, visibleText, absolute,
+  firstOf, headingLike, headingsMatching, inSection, meta, textOfAll, toNumber,
+};
+
+/**
+ * The reader for whichever marketplace this page belongs to.
+ *
+ * Constructed per call rather than cached: a single-page app changes the document under us between
+ * reads, and a reader holding a memoised JSON-LD block from the previous route would answer about the
+ * wrong page. One read is one instance.
+ *
+ * A missing registry means the reader files were not injected — a stale caller passing a shorter file
+ * list, most likely. Saying so beats a TypeError from somewhere three frames deeper.
+ */
+function reader() {
+  const platform = currentPlatform();
+  if (!globalThis.ALReaders) {
+    throw new Error("The reader files were not injected — reload the extension and try again.");
+  }
+  const Kind = globalThis.ALReaders.for(platform?.id);
+  return new Kind(platform);
 }
 
 // --- job -----------------------------------------------------------------------------
@@ -266,86 +433,86 @@ function readJob() {
     return { error: "This doesn't look like a job page — no job id in the URL." };
   }
 
-  const posting = structuredData().find((d) => d && /JobPosting/i.test(d["@type"] || "")) || {};
-  const pageText = document.body?.innerText || "";
+  const me = reader();
+  const sel = (name) => firstOf(me.sel(name));
+  const label = (name, opts) =>
+    me.labels[name] ? nearLabel(me.labels[name], { ...opts, text: me.text }) : null;
+
+  const posting = me.structured.find((d) => d && /JobPosting/i.test(d["@type"] || "")) || {};
+  const pageText = me.text;
 
   const description =
-    clean((posting.description || "").replace(/<[^>]+>/g, " ")) ||
-    firstOf([
-      '[data-test="job-description-text"]',
-      '[data-test="Description"]',
-      "section[aria-labelledby*='description']",
-    ]) ||
-    "";
+    clean((posting.description || "").replace(/<[^>]+>/g, " ")) || sel("jobDescription") || "";
 
-  const budgetText = firstOf([
-    '[data-test="BudgetAmount"]',
-    '[data-test="budget"]',
-    '[data-test="job-type-label"] + div',
-  ]);
-  const typeLabel = firstOf(['[data-test="job-type-label"]', '[data-test="job-type"]']);
-  const hourly = /hourly/i.test(typeLabel || pageText.slice(0, 4000));
+  // Selector first, then the label. The label fallback is what makes this work on a site with no
+  // attribute for it: PeoplePerHour job pages carry "Budget: £1,200" as plain text, and before this
+  // every budget field there came back null — while `currency` came back "USD", asserting a currency
+  // about a figure that had never been read.
+  const budgetText =
+    sel("jobBudget") || (me.labels.budget ? moneyNear(me.labels.budget, { text: me.text }) : null);
+  const typeLabel = sel("jobType");
+  const hourly = new RegExp(me.labels.hourlyWord, "i").test(typeLabel || pageText.slice(0, 4000));
   const [budgetMin, budgetMax] = toRange(budgetText);
 
-  const proposalsText = firstOf(['[data-test="proposals-tier"]', '[data-test="ClientActivity"] li']);
-  const proposalMatch = pageText.match(/Proposals[^0-9]{0,40}(\d+)\s*(?:to|–|-)?\s*(\d+)?/i);
+  const proposalsText = sel("jobProposals");
 
   return {
-    platform: currentPlatform()?.id || "unknown",
+    platform: me.platform?.id || "unknown",
     external_id: externalId,
     url,
     title:
-      posting.title ||
-      firstOf(['[data-test="job-title"]', "header h1", "h1"]) ||
-      meta("og:title") ||
-      clean(document.title.replace(/\s*[-|]\s*Upwork.*$/i, "")),
+      posting.title || sel("jobTitle") || meta("og:title") || me.jobTitleFallback(),
     description: description.slice(0, 20000),
-    skills: textOfAll([
-      '[data-test="token"] span',
-      '[data-test="skills"] a',
-      'a[href*="/nx/search/jobs/?q="]',
-    ]),
+
+    // The signed-in account this page was read under, so the backend attributes the job to that
+    // account's profile rather than whichever is selected. Null when the header link isn't found.
+    account_id: findOwnProfile()?.id || null,
+
+    // The page's visible text, for the optional LLM reading. Only forwarded to the backend when the
+    // model is wanted (see api.js `withLlm`); the backend caps its length.
+    page_text: (pageText || "").slice(0, 200000),
+
+    skills: me.jobSkills(),
 
     // Terms
     work_type: hourly ? "hourly" : budgetMin !== null ? "fixed" : null,
     budget_min: budgetMin,
     budget_max: budgetMax,
     currency: currencyOf(budgetText),
-    experience_level: firstOf(['[data-test="expertise"]', '[data-test="contractor-tier"]']) ||
-      nearLabel("Experience Level"),
-    project_length: firstOf(['[data-test="duration"]']) || nearLabel("Project Length|Duration"),
-    hours_per_week: nearLabel("Hourly|hrs/week", { after: 60 }),
-    connects_required: toNumber(nearLabel("Connects required|Send a proposal for")),
-    category: firstOf(['[data-test="category"]', '[data-test="job-category"]']),
+    experience_level: sel("jobExperience") || label("experience"),
+    project_length: sel("jobDuration") || label("duration"),
+    hours_per_week: label("hoursPerWeek", { after: 60 }),
+    connects_required: toNumber(label("connects")),
+    category: sel("jobCategory"),
 
     // Competition, which the backend scores rather than gates on
     proposal_count:
-      toNumber(proposalsText) ?? (proposalMatch ? Number(proposalMatch[2] || proposalMatch[1]) : null),
-    interviewing: toNumber(nearLabel("Interviewing")),
-    invites_sent: toNumber(nearLabel("Invites sent")),
-    unanswered_invites: toNumber(nearLabel("Unanswered invites")),
-    last_viewed_by_client: nearLabel("Last viewed by client"),
+      toNumber(proposalsText) ?? me.proposalCount(),
+    interviewing: toNumber(label("interviewing")),
+    invites_sent: toNumber(label("invitesSent")),
+    unanswered_invites: toNumber(label("unansweredInvites")),
+    last_viewed_by_client: label("lastViewed"),
 
     posted_at: posting.datePosted || null,
-    posted_text: nearLabel("Posted", { after: 60 }),
+    posted_text: label("posted", { after: 60 }),
 
     // Who is hiring. A client's history predicts whether a bid is worth the connects, so it's part
     // of the posting rather than a separate lookup.
     client: {
-      country: firstOf(['[data-test="client-country"]', '[data-test="LocationLabel"]']),
-      city: firstOf(['[data-test="client-city"]']),
-      rating: toNumber(firstOf(['[data-test="buyer-rating"]', '[data-test="client-rating"]'])),
-      reviews: toNumber(nearLabel("reviews?", { after: 40 })),
-      total_spent: toNumber(firstOf(['[data-test="client-spend"]']) || nearLabel("total spent")),
-      total_hires: toNumber(nearLabel("hires?", { after: 40 })),
-      active_hires: toNumber(nearLabel("active")),
-      jobs_posted: toNumber(nearLabel("jobs posted")),
-      hire_rate: nearLabel("hire rate"),
-      avg_hourly_paid: toNumber(nearLabel("/hr avg hourly rate paid")),
-      member_since: firstOf(['[data-test="client-contract-date"]']) || nearLabel("Member since"),
-      payment_verified: /payment (method )?verified/i.test(pageText),
-      company_size: nearLabel("employees|company size"),
-      industry: firstOf(['[data-test="client-industry"]']),
+      country: sel("clientCountry"),
+      city: sel("clientCity"),
+      rating: toNumber(sel("clientRating")),
+      reviews: numberNear(me.labels.reviews, { text: me.text }),
+      total_spent: toNumber(sel("clientSpend") || moneyNear(me.labels.totalSpent, { text: me.text })),
+      total_hires: numberNear(me.labels.hires, { text: me.text }),
+      active_hires: toNumber(label("activeHires")),
+      jobs_posted: toNumber(label("jobsPosted")),
+      hire_rate: label("hireRate"),
+      avg_hourly_paid: toNumber(label("avgHourly")),
+      member_since: sel("clientMemberSince") || label("memberSince"),
+      payment_verified: me.paymentVerified(),
+      company_size: label("companySize"),
+      industry: sel("clientIndustry"),
     },
   };
 }
@@ -366,7 +533,25 @@ function blocks(containerSelectors, mapper, limit = 25) {
 
 function readProfile() {
   const url = location.href.split("?")[0];
+
+  /**
+   * The account's handle, asked of the marketplace rather than guessed from the URL.
+   *
+   * `profileId` is already defined per platform, because it is what `isOwnProfile` compares to decide
+   * whose profile you are looking at — so deriving it a second time here meant two answers to one
+   * question, and the versions could disagree. This file has been bitten by that three times now: the
+   * worker's copy of the URL matchers drifted, the load test's copy of the host regexes drifted, and
+   * this was the third.
+   *
+   * Upwork writes it as `~0139befba192c820d1` and PeoplePerHour as a slug —
+   * `avinash-kumar-senior-software-engineer-zxjamvaw` — and neither shape is anyone else's business.
+   *
+   * The chain below is the fallback for a site with no entry at all, which is the only case the
+   * platform cannot answer.
+   */
+  const platformForPage = currentPlatform();
   const username =
+    platformForPage?.profileId?.(url) ||
     (url.match(/~[0-9a-zA-Z]{10,}/) || [])[0] ||
     (url.match(/\/(?:freelancers?|freelancer)\/([^/?]+)/) || [])[1] ||
     (url.match(/^https?:\/\/[^/]+\/([A-Za-z0-9_.-]+)\/?$/) || [])[1];
@@ -374,93 +559,91 @@ function readProfile() {
     return { error: "Open a freelancer profile page first." };
   }
 
-  const titled = fromTitle();
+  const session = sessionState();
+  if (session.status !== "ok") {
+    return { status: session.status, error: `Not signed in — ${session.why}.` };
+  }
 
-  // "$20.00/hr" is its own heading with nothing else identifying it, so match the shape.
-  const rateText = firstOf(['[itemprop="priceRange"]']) || headingLike(/^[$£€₹][\d,.]+\s*\/\s*hr/i);
+  const me = reader();
+  const sel = (name) => firstOf(me.sel(name));
+  const label = (name, opts) =>
+    me.labels[name] ? nearLabel(me.labels[name], { ...opts, text: me.text }) : null;
+  const titled = me.fromTitle();
 
-  const skills = (() => {
-    const scoped = inSection("Skills", ".air3-token, [class*='token']")
-      .map((n) => clean(n.textContent))
-      .filter(Boolean);
-    return scoped.length ? [...new Set(scoped)] : textOfAll([".air3-token"], 60);
-  })();
+  // Both asked of the reader, because both answers are a marketplace's own markup. Upwork prints its
+  // rate as a bare heading and PeoplePerHour tags its skills as filter links; neither site's trick
+  // works on the other, and neither belongs in a function that runs for all of them.
+  const rateText = me.rateText();
+  const skills = me.skills();
 
   return {
-    platform: currentPlatform()?.id || "unknown",
+    platform: me.platform?.id || "unknown",
     username,
     url,
+    status: "ok",
+
+    /**
+     * Whether this is the signed-in user's own profile, by account id rather than by name.
+     *
+     * The backend mirrors a captured profile onto *your* `freelancer_profiles` row, so a stranger's
+     * profile sent here overwrites your name, rate, tagline and skills with theirs. `null` means
+     * undecidable — no header link to compare against — and the backend treats that as "not proven
+     * mine" and refuses, rather than picking the convenient answer.
+     */
+    is_own: isOwnProfile(),
+
+    // The account's stable marketplace id, parsed from the URL (Upwork's ~01… cipher id). The
+    // backend keys the connection on this, not the mutable handle — see /ingest/profile.
+    account_id: me.platform?.profileId?.(url) || null,
+
+    // The page's visible text, for the optional LLM reading. Only forwarded to the backend when the
+    // model is wanted (see api.js `withLlm`); the backend caps its length.
+    page_text: (me.text || "").slice(0, 200000),
 
     // Identity — itemprop survived every redesign so far; the title is the backstop.
-    display_name: firstOf(['[itemprop="name"]']) || titled.name,
-    tagline: headingLike(/^(?!.*\/hr)[A-Z][^$]{8,90}(Engineer|Developer|Designer|Consultant|Specialist|Manager|Architect|Writer|Marketer)/) ||
-      titled.tagline,
-    summary: firstOf(['[itemprop="description"]', '[data-cy="about-me-section"] p']) ||
-      meta("description", "og:description"),
-    avatar_url:
-      absolute(document.querySelector('img[alt*="profile" i], [class*="avatar"] img')?.src) ||
-      meta("og:image"),
-    country: firstOf(['[itemprop="country-name"]']) || titled.country,
-    city: firstOf(['[itemprop="locality"]']) || titled.city,
-    timezone: nearLabel("local time|Timezone"),
-    availability: nearLabel("Availability|hrs/week"),
-    languages: [...new Set(
-      inSection("Languages", "li, .air3-token").map((n) => clean(n.textContent)).filter(Boolean)
-    )].slice(0, 20),
+    display_name: sel("profileName") || titled.name,
+    tagline: me.tagline(),
+    summary: sel("profileSummary") || meta("description", "og:description"),
+    avatar_url: me.avatarUrl(),
+    country: sel("profileCountry") || titled.country,
+    city: sel("profileCity") || titled.city,
+    timezone: label("timezone"),
+    availability: label("availability"),
+    languages: me.languages(),
 
     // Money
     hourly_rate: toNumber(rateText),
     currency: currencyOf(rateText),
-    total_earnings: toNumber(nearLabel("Total earnings")),
+    total_earnings: toNumber(moneyNear(me.labels.totalEarnings, { text: me.text }) || label("totalEarnings")),
 
     // Track record
-    rating: toNumber(nearLabel("Job Success|rating", { after: 30 })),
-    total_reviews: toNumber(nearLabel("reviews?", { after: 30 })),
-    job_success: toNumber(nearLabel("Job Success", { after: 30 })),
-    total_jobs: toNumber(nearLabel("Total jobs")),
-    total_hours: toNumber(nearLabel("Total hours")),
+    rating: toNumber(label("rating", { after: 30 })),
+    total_reviews: numberNear(me.labels.reviews, { text: me.text }),
+    job_success: toNumber(label("jobSuccess", { after: 30 })),
+    total_jobs: toNumber(label("totalJobs")),
+    total_hours: toNumber(label("totalHours")),
+
+    // Bidding credits in hand. Upwork calls them Connects and charges some per proposal, so this is
+    // how many bids the account can still afford — the balance, not the per-job price, which is read
+    // on the job page as `connects_required`.
+    connects_balance: me.connectsBalance(),
+
+    // Accounts the freelancer has proven they own. Only the ones actually linked — the same card
+    // advertises the ones they have not connected, and those are not facts about them.
+    linked_accounts: me.linkedAccounts(),
 
     skills,
 
-    portfolio: (() => {
-      const links = inSection("Portfolio", "a[href]");
-      if (!links.length) return [];
-      return links
-        .map((a) => ({
-          title: clean(a.getAttribute("aria-label") || a.textContent) || null,
-          url: absolute(a.getAttribute("href")),
-          image: absolute(a.querySelector("img")?.getAttribute("src")),
-        }))
-        .filter((entry) => entry.title || entry.image)
-        .slice(0, 25);
-    })(),
+    portfolio: me.portfolio(),
 
-    work_history: [...new Set(
-      inSection("Work history", "h4, h5, li")
-        .map((node) => clean(node.textContent))
-        .filter((text) => text && text.length > 3)
-    )]
-      .slice(0, 25)
-      .map((title) => ({ title })),
-
-    // Each role is one heading, "Software Engineer - III | Ebay". Splitting on the pipe is what
-    // separates the role from the employer; without it both collapse into one string.
-    employment: headingsMatching(/\|/).map((text) => {
-      const [role, company] = text.split("|").map(clean);
-      return { title: role || null, company: company || null };
-    }),
-
-    education: [...new Set(
-      inSection("Education", "h4, h5, li").map((n) => clean(n.textContent)).filter(Boolean)
-    )]
-      .slice(0, 10)
-      .map((school) => ({ school })),
-
-    certifications: [...new Set(
-      inSection("Certifications", "h4, h5, li")
-        .map((n) => clean(n.textContent))
-        .filter((text) => text && !/Earn \d+ Connects|Claim certification/i.test(text))
-    )].slice(0, 20),
+    work_history: me.workHistory(),
+    employment: me.employment(),
+    // Non-null when the page is holding entries back behind a "show more" the collector does not
+    // click. Three jobs out of five, filed as the whole history, is worse than saying two are missing.
+    employment_hidden: me.employmentHidden(),
+    other_experiences: me.otherExperiences(),
+    education: me.education(),
+    certifications: me.certifications(),
   };
 }
 
@@ -588,7 +771,8 @@ function readJobCards(limit = 60) {
   const seen = new Set();
   const cards = [];
 
-  const platform = currentPlatform();
+  const me = reader();
+  const platform = me.platform;
   const selector = platform?.jobLink || 'a[href*="/jobs/"]';
 
   for (const anchor of document.querySelectorAll(selector)) {
@@ -626,7 +810,7 @@ function readJobCards(limit = 60) {
       proposals: proposals ? Number(proposals[2] || proposals[1] || proposals[3]) : null,
       posted: (text.match(/\b\d+\s*(?:minute|hour|day|week|month)s?\s*ago\b/i) || [null])[0],
       skills: [...new Set(
-        [...(card?.querySelectorAll(".air3-token, [class*='token']") || [])]
+        [...(card?.querySelectorAll(me.selectors.skillToken) || [])]
           .map((n) => clean(n.textContent))
           .filter(Boolean)
       )].slice(0, 15),
@@ -673,6 +857,80 @@ function readMessageRooms(limit = 50) {
     if (rooms.length >= limit) break;
   }
   return rooms;
+}
+
+/**
+ * Wait for a lazily-rendered list to stop growing, then report how big it got.
+ *
+ * A fixed sleep was wrong in the way fixed sleeps always are. Upwork renders job cards as they come,
+ * so reading 2.5 seconds after `complete` caught whatever had arrived by then — about a screenful —
+ * and the rest of the page's own first batch landed unread a moment later. Too short and the reader
+ * undercounts; too long and every page in the run pays for the slowest one.
+ *
+ * Watching the count instead asks the question that actually matters: has the page finished putting
+ * things on the screen? It resolves as soon as the answer is yes.
+ *
+ * This waits. It does **not** scroll, click "load more", or request the next page — the run reads what
+ * the page chose to render on its own. That distinction is the whole of the constraint written at the
+ * top of `src/background/worker.js`, and it is the difference between a tool that read your page and
+ * one that walked the site for you.
+ */
+function awaitList({ stableFor = 900, timeoutMs = 12000 } = {}) {
+  const platform = currentPlatform();
+  const selector = platform?.jobLink || 'a[href*="/jobs/"]';
+
+  return new Promise((resolve) => {
+    const started = Date.now();
+    let last = -1;
+    let steady = 0;
+
+    const tick = () => {
+      const count = document.querySelectorAll(selector).length;
+      steady = count === last ? steady + 150 : 0;
+      last = count;
+
+      // Settled means it stopped changing, not that it passed some size: a genuinely quiet feed with
+      // three jobs is a correct answer, and a threshold would call it a failure forever.
+      if (steady >= stableFor) return resolve({ count, settled: true, waited: Date.now() - started });
+      if (Date.now() - started > timeoutMs) {
+        return resolve({ count, settled: false, waited: Date.now() - started });
+      }
+      setTimeout(tick, 150);
+    };
+    tick();
+  });
+}
+
+/**
+ * Scroll to the foot of the feed **once**, wait for whatever that brought, and put the page back.
+ *
+ * Upwork holds most of the feed back until you scroll, so reading without scrolling reads about a
+ * screenful of a list that has forty jobs in it. One scroll is what a person does within seconds of
+ * landing on a feed, and it roughly doubles what the run sees.
+ *
+ * Once is the whole point, and it is written as one statement rather than a loop with a limit of one
+ * so that "just raise the cap" is not a one-character change. Scrolling until the feed stops giving is
+ * pagination — the thing the constraint at the top of `src/background/worker.js` refuses — and the
+ * difference between the two is only ever a number, which is exactly why the number should not exist.
+ *
+ * The position is restored afterwards. In click-through mode this runs in a tab the user has open and
+ * is looking at, and leaving their feed scrolled to the bottom is a visible side effect of something
+ * they asked to happen quietly.
+ */
+async function loadMoreOnce(options = {}) {
+  const platform = currentPlatform();
+  const selector = platform?.jobLink || 'a[href*="/jobs/"]';
+  const count = () => document.querySelectorAll(selector).length;
+
+  const before = { x: window.scrollX, y: window.scrollY };
+  const had = count();
+
+  window.scrollTo(0, document.documentElement.scrollHeight);
+  const settled = await awaitList(options);
+
+  // Restored even when nothing arrived: the scroll happened either way.
+  window.scrollTo(before.x, before.y);
+  return { had, got: settled.count, gained: settled.count - had, settled: settled.settled };
 }
 
 /**
@@ -746,7 +1004,18 @@ function afterRouteChange(previousUrl, timeoutMs = 15000) {
   });
 }
 
-/** One entry point the collector calls with the page key it navigated to. */
+/**
+ * Whether this page is the thing we asked for, or a wall in front of it.
+ *
+ * The reader's own — asking a DOM what it is showing is the per-marketplace job, so it lives on the
+ * reader with the rest of that. Kept here as a named entry point because the popup and the worker
+ * call `ALExtract.sessionState()` across an `executeScript` boundary, where a method on an object
+ * they cannot hold is not something they can name.
+ */
+function sessionState() {
+  return reader().sessionState();
+}
+
 /**
  * One entry point the collector calls with the page key it navigated to.
  *
@@ -762,7 +1031,25 @@ function readList(key) {
     url: location.href.split("?")[0],
     title: document.title,
     at: new Date().toISOString(),
+    status: "ok",
+    // The signed-in account this page was read under, so the backend attributes the jobs to that
+    // account's profile rather than whichever is selected. Null when the header link isn't found.
+    account_id: findOwnProfile()?.id || null,
   };
+
+  // Checked before any reader runs, so a wall can never be mistaken for an empty result.
+  const session = sessionState();
+  if (session.status !== "ok") {
+    return {
+      ...base,
+      status: session.status,
+      count: 0,
+      error:
+        session.status === "signed_out"
+          ? `Not signed in to ${platform?.label || "this site"} — ${session.why}.`
+          : `${platform?.label || "This site"} ${session.why}.`,
+    };
+  }
 
   switch (page?.reads) {
     case "jobs": {
@@ -784,15 +1071,102 @@ function readList(key) {
       const rooms = readMessageRooms();
       return { ...base, count: rooms.length, rooms };
     }
+    case "profile": {
+      // Navigated here by the platform's `ownProfileUrl`, which resolves against your session — so
+      // whichever account is signed in, this landed on that account's own profile. `readProfile`
+      // still checks `is_own` from the page rather than trusting how we arrived, because a redirect
+      // that quietly went somewhere else must not be mistaken for proof.
+      const me = readProfile();
+      return { ...base, count: me?.error ? 0 : 1, profile: me, error: me?.error };
+    }
     default:
       return { ...base, error: `No reader configured for ${key}` };
   }
+}
+
+/**
+ * The signed-in user's own profile URL, taken from the site's own navigation.
+ *
+ * "Which profile is mine?" has no stable answer from a URL pattern — `upwork.com/freelancers/~01…`
+ * matches everybody's. But the marketplace itself knows, and it puts a link to *your* profile in its
+ * own header: that is what the avatar menu opens. Following the site's own link is the same trick the
+ * rest of this file uses for fields, and it needs nothing configured.
+ *
+ * Returns `null` rather than guessing when the header has no such link — signed out, or a redesign.
+ * A guess here is the expensive kind of wrong: the profile it names gets written into your own
+ * profile row.
+ */
+function findOwnProfile() {
+  const platform = currentPlatform();
+  if (!platform?.ownProfileLink) return null;
+
+  const session = sessionState();
+  if (session.status !== "ok") return { status: session.status, url: null, id: null };
+
+  // Header and account menus first. A profile link inside a job card or a review is *someone else's*,
+  // and that is the whole distinction being drawn here.
+  const scopes = [
+    "header",
+    "[data-test*='user-menu']",
+    "[class*='user-menu']",
+    "[class*='account-menu']",
+    "[aria-label*='account' i]",
+    "nav",
+  ];
+
+  for (const scope of scopes) {
+    for (const container of document.querySelectorAll(scope)) {
+      for (const anchor of container.querySelectorAll(platform.ownProfileLink)) {
+        const url = absolute(anchor.getAttribute("href"));
+        if (!url || !platform.isProfilePage(url)) continue;
+        return { status: "ok", url: url.split("?")[0], id: platform.profileId?.(url) || null, via: "menu" };
+      }
+    }
+  }
+
+  // Then anywhere on the page, but only a link that *says* it is yours. "Your profile" and "View my
+  // profile" are phrases a marketplace only ever writes about the signed-in person — matching the
+  // words a human reads is the same trick the rest of this file uses for fields, and it survives the
+  // account menu being restructured. A link with someone else's name on it cannot match.
+  for (const anchor of document.querySelectorAll(platform.ownProfileLink)) {
+    const label = clean(anchor.textContent || anchor.getAttribute("aria-label") || "");
+    if (!/^(?:view |see |go to )?(?:your|my) profile$/i.test(label)) continue;
+    const url = absolute(anchor.getAttribute("href"));
+    if (!url || !platform.isProfilePage(url)) continue;
+    return { status: "ok", url: url.split("?")[0], id: platform.profileId?.(url) || null, via: "label" };
+  }
+
+  // Nothing on this page says which profile is yours. `ownProfileUrl` is the way out where a platform
+  // has one — Upwork resolves `/freelancers/` against your session and redirects to your own profile —
+  // but following it needs a navigation, which only the collector can do.
+  return { status: "not_found", url: null, id: null, navigateTo: platform.ownProfileUrl || null };
+}
+
+/**
+ * Is the profile page we are on the signed-in user's own?
+ *
+ * Compared by the account id in the URL against the id the header links to. Not by name, and not by
+ * the presence of an "Edit profile" button — both move; the id does not.
+ *
+ * `null` means undecidable (no header link to compare against), which the caller must treat as "not
+ * proven mine" rather than as either answer.
+ */
+function isOwnProfile() {
+  const platform = currentPlatform();
+  const mine = findOwnProfile();
+  if (!mine || mine.status !== "ok" || !mine.id) return null;
+  const here = platform?.profileId?.(location.href);
+  return here ? here === mine.id : null;
 }
 
 /** Which of the readers applies here, decided by the platform rather than by the popup. */
 function whichPage() {
   const platform = currentPlatform();
   if (!platform) return null;
+  // Reported before the page type, because "you are signed out" is the useful answer and "this is
+  // not a page I read" is a misleading one — the login page genuinely isn't, but that isn't why.
+  const session = sessionState();
+  if (session.status !== "ok") return session.status;
   if (platform.isProfilePage(location.href)) return "profile";
   if (platform.isJobPage(location.href)) return "job";
   return "other";
@@ -802,6 +1176,17 @@ function whichPage() {
   // link shapes and the tracking parameter bite, so it is worth pinning directly.
   return {
     readJob, readProfile, diagnose, readText, readList, clickTo, afterRouteChange, whichPage,
-    idFromUrl, canonicalJobUrl,
+    idFromUrl, canonicalJobUrl, sessionState, findOwnProfile, isOwnProfile, awaitList, loadMoreOnce,
+    // Which reader each marketplace gets, and what it inherits. Exported for the tests: the point of
+    // the hierarchy is that a subclass *narrows* the base rather than replacing it, and that is a
+    // claim worth checking directly instead of inferring from a field's value.
+    readerShape: () => {
+      const shape = (id) => {
+        const Kind = globalThis.ALReaders.for(id);
+        const made = new Kind(null);
+        return { name: Kind.name, jobTitle: made.sel("jobTitle"), skillToken: made.selectors.skillToken };
+      };
+      return { upwork: shape("upwork"), peopleperhour: shape("peopleperhour"), unknown: shape("nope") };
+    },
   };
 })();
